@@ -1,0 +1,26 @@
+{
+  "name": "HederaLendingTemplate",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HederaLendingTemplate — a collateralized lending market template for Hedera (scaffold-hbar external template)",
+  "workspaces": [
+    "packages/hardhat",
+    "packages/nextjs"
+  ],
+  "scripts": {
+    "compile": "npm run compile -w @sh/hardhat",
+    "test": "npm run test -w @sh/hardhat",
+    "chain": "npm run chain -w @sh/hardhat",
+    "deploy": "npm run deploy -w @sh/hardhat",
+    "bootstrap": "npm run bootstrap -w @sh/hardhat",
+    "associate": "npm run associate -w @sh/hardhat",
+    "dev": "npm run dev -w @sh/nextjs",
+    "build": "npm run build -w @sh/nextjs",
+    "start": "npm run start -w @sh/nextjs",
+    "lint": "npm run lint -w @sh/hardhat && npm run lint -w @sh/nextjs"
+  },
+  "packageManager": "npm@10.0.0",
+  "engines": {
+    "node": ">=20.18.3"
+  }
+}

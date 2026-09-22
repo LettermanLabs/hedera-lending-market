@@ -1,0 +1,27 @@
+{
+  "name": "hedera-lending-market",
+  "description": "Collateralized lending market on Hedera: supply and borrow an HTS stable asset against HBAR collateral, with Pyth-powered pricing, SaucerSwap liquidation swaps, and an HCS activity feed.",
+  "version": "1.0.0",
+  "create-scaffold-hbar": {
+    "rename": {
+      "HederaLendingTemplate": {
+        "to": "{{projectName}}",
+        "paths": ["."]
+      }
+    },
+    "envVars": [
+      {
+        "key": "HEDERA_ACCOUNT_ID",
+        "description": "Your Hedera testnet account ID (0.0.XXXXXX) — pays for deployment and becomes the HTS token treasury"
+      },
+      {
+        "key": "HEDERA_PRIVATE_KEY",
+        "description": "Private key for the account above (ECSA hex or DER — never commit this)"
+      },
+      {
+        "key": "NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID",
+        "description": "Optional — WalletConnect project ID so HashPack can connect through RainbowKit"
+      }
+    ]
+  }
+}
