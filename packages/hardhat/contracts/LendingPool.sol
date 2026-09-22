@@ -214,11 +214,11 @@ contract LendingPool is ReentrancyGuard {
 
     // ── Collateral (HBAR) ─────────────────────────────────────────────────────
 
-    /// @notice Deposit native HBAR as collateral. It is wrapped into SaucerSwap WHBAR
-    ///         and custodied by the pool.
+    /// @notice Deposit native HBAR as collateral, custodied directly by the pool.
+    ///         HBAR stays native: liquidations swap it through SaucerSwap's
+    ///         payable ETH functions (the router wraps it into WHBAR itself).
     function depositCollateral() external payable nonReentrant {
         require(msg.value > 0, "no HBAR sent");
-        whbar.deposit{value: msg.value}();
         collateralOf[msg.sender] += msg.value;
         emit CollateralDeposited(msg.sender, msg.value);
     }
@@ -228,7 +228,6 @@ contract LendingPool is ReentrancyGuard {
         uint256 price18 = updatePrice(priceUpdateData);
         collateralOf[msg.sender] -= amount;
         if (!_isHealthy(msg.sender, price18)) revert InsufficientCollateral();
-        whbar.withdraw(amount);
         (bool ok, ) = msg.sender.call{value: amount}("");
         if (!ok) revert TransferFailed();
         emit CollateralWithdrawn(msg.sender, amount);
@@ -312,12 +311,13 @@ contract LendingPool is ReentrancyGuard {
         uint256 seizeWhbar = Math.min(_whbarFromUsd(seizeUsd18, price18), collateralOf[borrower]);
         collateralOf[borrower] -= seizeWhbar;
 
-        IERC20(address(whbar)).forceApprove(address(saucerSwapRouter), seizeWhbar);
+        // Swap the seized native HBAR through SaucerSwap V1's payable ETH entry
+        // point (path starts at the WHBAR token address; the router wraps HBAR
+        // itself). Recovered USDX is paid to the liquidator.
         address[] memory path = new address[](2);
         path[0] = address(whbar);
         path[1] = address(usdx);
-        uint256[] memory amounts = saucerSwapRouter.swapExactTokensForTokens(
-            seizeWhbar,
+        uint256[] memory amounts = saucerSwapRouter.swapExactETHForTokens{value: seizeWhbar}(
             minUsdxOut,
             path,
             address(this),

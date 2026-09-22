@@ -3,7 +3,8 @@ import * as path from "path";
 
 export interface DeploymentRecord {
   network: string;
-  lendingPool: string;
+  lendingPool?: string;
+  lendingPoolId?: string;
   usdxTokenId: string;
   usdxEvm: string;
   whbar: string;
@@ -27,7 +28,7 @@ export function saveDeployment(record: DeploymentRecord): void {
     `NEXT_PUBLIC_CHAIN_ID=296`,
     `NEXT_PUBLIC_RPC_URL=https://testnet.hashio.io/api`,
     `NEXT_PUBLIC_MIRROR_NODE=https://testnet.mirrornode.hedera.com`,
-    `NEXT_PUBLIC_LENDING_POOL=${record.lendingPool}`,
+    record.lendingPool ? `NEXT_PUBLIC_LENDING_POOL=${record.lendingPool}` : null,
     `NEXT_PUBLIC_USDX_TOKEN_ID=${record.usdxTokenId}`,
     `NEXT_PUBLIC_USDX_EVM=${record.usdxEvm}`,
     `NEXT_PUBLIC_WHBAR=${record.whbar}`,
@@ -39,7 +40,9 @@ export function saveDeployment(record: DeploymentRecord): void {
   ]
     .filter(Boolean)
     .join("\n");
-  fs.writeFileSync(NEXTJS_ENV, env + "\n");
+  if (record.lendingPool) {
+    fs.writeFileSync(NEXTJS_ENV, env + "\n");
+  }
 }
 
 export function loadDeployment(network = "hedera-testnet"): DeploymentRecord | null {

@@ -4,7 +4,8 @@
  * on-chain price is provably fresh.
  */
 export async function fetchPriceUpdate(feedId: string): Promise<`0x${string}`[]> {
-  const res = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${feedId}`);
+  const base = process.env.NEXT_PUBLIC_HERMES_URL ?? "https://hermes.pyth.network";
+  const res = await fetch(`${base}/v2/updates/price/latest?ids[]=${feedId}`);
   if (!res.ok) throw new Error(`Hermes request failed: ${res.status}`);
   const json = (await res.json()) as { binary: { data: string[] } };
   return json.binary.data.map(d => `0x${d}` as `0x${string}`);

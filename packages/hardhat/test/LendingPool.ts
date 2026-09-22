@@ -48,13 +48,12 @@ const NO_UPDATE: string[] = [];
 
 describe("LendingPool", () => {
   describe("collateral", () => {
-    it("wraps deposited HBAR into WHBAR collateral", async () => {
-      const { bob, pool, whbar } = await loadFixture(deployFixture);
+    it("accepts native HBAR collateral", async () => {
+      const { bob, pool } = await loadFixture(deployFixture);
       await expect(pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR }))
         .to.emit(pool, "CollateralDeposited")
         .withArgs(bob.address, 100n * ONE_HBAR);
       expect(await pool.collateralOf(bob.address)).to.equal(100n * ONE_HBAR);
-      expect(await whbar.balanceOf(await pool.getAddress())).to.equal(100n * ONE_HBAR);
     });
 
     it("rejects zero-value deposits", async () => {

@@ -37,6 +37,23 @@ contract MockSaucerSwapRouter {
         amounts[1] = out;
     }
 
+    /// @notice HBAR-in variant: pays out from the mock's float against msg.value.
+    function swapExactETHForTokens(
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256
+    ) external payable returns (uint256[] memory amounts) {
+        require(path.length == 2, "bad path");
+        require(path[0] == address(tokenIn), "bad path[0]");
+        uint256 out = (msg.value * rate) / 1e8;
+        require(out >= amountOutMin, "slippage");
+        tokenOut.transfer(to, out);
+        amounts = new uint256[](2);
+        amounts[0] = msg.value;
+        amounts[1] = out;
+    }
+
     function getAmountsOut(uint256 amountIn, address[] calldata) external view returns (uint256[] memory amounts) {
         amounts = new uint256[](2);
         amounts[0] = amountIn;

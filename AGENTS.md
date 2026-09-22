@@ -36,7 +36,11 @@ testnet. Read this before changing code.
    before changing them.
 3. **Decimals discipline**: HBAR/WHBAR = 8, USDX = 6, USD values in the pool = 18.
    Pyth prices carry their own exponent — normalize via `10 ** (18 + expo)`.
-4. **The pull-oracle pattern is load-bearing**: any entry point that reads a price takes
+4. **Collateral is native HBAR**, custodied by the pool — never wrapped client-side.
+   The SaucerSwap leg uses the router's *payable ETH* entry point (`swapExactETHForTokens`),
+   path `[WHBAR, USDX]`; the router wraps HBAR itself. EVM value units are wei
+   (1 HBAR = 1e18 wei); the Hashio relay rejects non-zero value below 1e10 wei (1 tinybar).
+5. **The pull-oracle pattern is load-bearing**: any entry point that reads a price takes
    `bytes[] priceUpdateData` + forwards `getUpdateFee` as msg.value, then calls
    `getPriceNoOlderThan(id, 120s)`. Never cache-and-trust beyond 120s.
 
@@ -57,7 +61,7 @@ testnet. Read this before changing code.
 | File | Integration |
 | --- | --- |
 | `contracts/LendingPool.sol` → `updatePrice` | Pyth pull oracle (HBAR/USD) |
-| `contracts/LendingPool.sol` → `liquidate` | SaucerSwap V1 router (`swapExactTokensForTokens`) |
+| `contracts/LendingPool.sol` → `liquidate` | SaucerSwap V1 router (`swapExactETHForTokens`, payable ETH leg) |
 | `contracts/LendingPool.sol` → `associateTokens` | HTS precompile `0x167` |
 | `scripts/deploy.ts` | HTS `TokenCreateTransaction`, HCS `TopicCreateTransaction` |
 | `app/api/activity/route.ts` | HCS `TopicMessageSubmitTransaction` (server-side operator) |
