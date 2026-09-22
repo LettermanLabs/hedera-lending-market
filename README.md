@@ -1,5 +1,17 @@
 # Hedera Lending Market
 
+**Created and maintained by LettermanLabs.** This is the
+[canonical repository](https://github.com/LettermanLabs/hedera-lending-market)
+for our Scaffold-HBAR Template Bounty project. Watch the
+[interactive walkthrough](https://lettermanlabs.com/Hedera/) and see
+[authorship and source provenance](PROVENANCE.md) for the dated development record.
+
+Reuse and forks are welcome under the [MIT license](LICENSE); retain the applicable
+copyright and license notices. If you enter a derivative in a competition, please
+credit this upstream project and distinguish your own contributions. Eligibility
+is determined by the competition organizers. Third-party components retain their
+own licenses and attribution.
+
 A scaffold-hbar lending template for Hedera testnet. Supply six-decimal HTS USDX,
 lock native HBAR, borrow against Pyth HBAR/USD, and liquidate through a SaucerSwap
 V1 route. The optional HCS feed records verified pool events with consensus timestamps.
