@@ -21,8 +21,11 @@ async function associateIfNeeded(tokenId: string): Promise<void> {
       .sign(operatorKey);
     await (await tx.execute(client)).getReceipt(client);
     console.log(`✅ associated ${tokenId}`);
-  } catch {
+  } catch (error) {
+    if (!String(error).includes("TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT")) throw error;
     console.log(`ℹ️  already associated with ${tokenId}`);
+  } finally {
+    client.close();
   }
 }
 

@@ -1,19 +1,79 @@
-/**
- * Fetches a signed Pyth price update payload from Hermes. The payload is passed to
- * the pool's pull-oracle entry points (borrow / withdraw / liquidate) so the
- * on-chain price is provably fresh.
- */
-export async function fetchPriceUpdate(feedId: string): Promise<`0x${string}`[]> {
-  const base = process.env.NEXT_PUBLIC_HERMES_URL ?? "https://hermes.pyth.network";
-  const res = await fetch(`${base}/v2/updates/price/latest?ids[]=${feedId}`);
-  if (!res.ok) throw new Error(`Hermes request failed: ${res.status}`);
-  const json = (await res.json()) as { binary: { data: string[] } };
-  return json.binary.data.map(d => `0x${d}` as `0x${string}`);
+import { pythPrice18 } from "./amounts";
+
+export interface PriceSnapshot {
+  updateData: `0x${string}`[];
+  price18: bigint;
+  publishTime: number;
 }
 
-export async function fetchHbarUsd(): Promise<number> {
-  const res = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${process.env.NEXT_PUBLIC_PYTH_FEED_ID ?? "0x3728e591097635310e6341af53db8b7ee42da9b3a8d918f9463ce9cca886dfbd"}`);
-  const json = (await res.json()) as { parsed: { price: { price: string; expo: number } }[] };
-  const p = json.parsed[0].price;
-  return Number(p.price) * 10 ** p.expo;
+/** Authenticated Hermes requests stay on the server; browser code never sees API keys. */
+export async function fetchPriceSnapshot(
+  feedId: string,
+): Promise<PriceSnapshot> {
+  const res = await fetch(
+    `/api/price-update?feedId=${encodeURIComponent(feedId)}`,
+    {
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      typeof json.error === "string"
+        ? json.error
+        : `Price update unavailable (${res.status}).`,
+    );
+  }
+  const data = json.binary?.data;
+  if (
+    !Array.isArray(data) ||
+    data.length === 0 ||
+    !data.every(
+      (item: unknown) =>
+        typeof item === "string" && /^(?:0x)?(?:[0-9a-fA-F]{2})+$/.test(item),
+    )
+  ) {
+    throw new Error("The price service returned an invalid signed update.");
+  }
+  const parsed = Array.isArray(json.parsed)
+    ? json.parsed.find(
+        (item: { id?: string }) =>
+          item.id?.replace(/^0x/, "").toLowerCase() ===
+          feedId.replace(/^0x/, "").toLowerCase(),
+      )
+    : undefined;
+  const price = parsed?.price;
+  const publishTime = price?.publish_time;
+  if (
+    !price ||
+    typeof price.price !== "string" ||
+    typeof publishTime !== "number" ||
+    !Number.isFinite(publishTime)
+  ) {
+    throw new Error(
+      "The price service did not return the requested HBAR feed.",
+    );
+  }
+  if (
+    publishTime < Math.floor(Date.now() / 1000) - 120 ||
+    publishTime > Math.floor(Date.now() / 1000) + 30
+  ) {
+    throw new Error(
+      "The HBAR price update is stale. Try again when the oracle is available.",
+    );
+  }
+  return {
+    updateData: data.map(
+      (item: string) => `0x${item.replace(/^0x/, "")}` as `0x${string}`,
+    ),
+    price18: pythPrice18(price.price, price.expo),
+    publishTime,
+  };
+}
+
+export async function fetchPriceUpdate(
+  feedId: string,
+): Promise<`0x${string}`[]> {
+  return (await fetchPriceSnapshot(feedId)).updateData;
 }

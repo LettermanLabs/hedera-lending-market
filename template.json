@@ -4,9 +4,15 @@
   "version": "1.0.0",
   "create-scaffold-hbar": {
     "capabilities": {
-      "frontend": ["nextjs-app"],
-      "solidityFramework": ["hardhat"],
-      "packageManager": ["npm", "yarn"]
+      "frontend": [
+        "nextjs-app"
+      ],
+      "solidityFramework": [
+        "hardhat"
+      ],
+      "packageManager": [
+        "npm"
+      ]
     },
     "defaults": {
       "frontend": "nextjs-app",
@@ -16,29 +22,63 @@
     "rename": {
       "HederaLendingTemplate": {
         "to": "{{projectName}}",
-        "paths": ["."]
+        "paths": [
+          "."
+        ]
       }
     },
-    "instructions": [
-      "+Fill in your Hedera testnet credentials: copy .env.example to .env",
-      "Fund the deployer account from the Hedera Portal faucet",
-      "Deploy: {pm} run deploy",
-      "Seed the SaucerSwap pool: {pm} run bootstrap",
-      "Start the app: {pm} run dev"
-    ],
     "envVars": [
       {
         "key": "HEDERA_ACCOUNT_ID",
-        "description": "Your Hedera testnet account ID (0.0.XXXXXX) — pays for deployment and becomes the HTS token treasury"
+        "description": "Funded Hedera TESTNET account ID (0.0.N); deployment only."
       },
       {
         "key": "HEDERA_PRIVATE_KEY",
-        "description": "Private key for the account above (ECDSA hex or DER — never commit this)"
+        "description": "ECDSA private key for that account (raw or DER hex). Never commit."
       },
       {
-        "key": "NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID",
-        "description": "Optional — WalletConnect project ID so HashPack can connect through RainbowKit"
+        "key": "HEDERA_RPC_URL",
+        "description": "Optional testnet JSON-RPC endpoint; default https://testnet.hashio.io/api."
+      },
+      {
+        "key": "HERMES_URL",
+        "description": "Optional Hermes base URL for bootstrap; default https://hermes.pyth.network."
+      },
+      {
+        "key": "PYTH_API_KEY",
+        "description": "Hermes Bearer API key for bootstrap; configure separately in packages/nextjs/.env.local for the app."
       }
-    ]
+    ],
+    "requirements": {
+      "node": ">=22.14.0 <25",
+      "npm": ">=10"
+    },
+    "outro": {
+      "sections": [
+        {
+          "title": "Start locally",
+          "steps": [
+            {
+              "command": "{run:dev}"
+            },
+            {
+              "text": "The app boots without credentials. Read README.md for testnet deployment, server-only Pyth/HCS settings, and current SaucerSwap testnet limitations."
+            }
+          ]
+        },
+        {
+          "title": "Validate",
+          "steps": [
+            {
+              "command": "{run:check}"
+            },
+            {
+              "command": "{run:test:fork}"
+            }
+          ]
+        }
+      ],
+      "installCommand": "npm ci"
+    }
   }
 }
