@@ -3,12 +3,29 @@
   "description": "Collateralized lending market on Hedera: supply and borrow an HTS stable asset against HBAR collateral, with Pyth-powered pricing, SaucerSwap liquidation swaps, and an HCS activity feed.",
   "version": "1.0.0",
   "create-scaffold-hbar": {
+    "capabilities": {
+      "frontend": ["nextjs-app"],
+      "solidityFramework": ["hardhat"],
+      "packageManager": ["npm", "yarn"]
+    },
+    "defaults": {
+      "frontend": "nextjs-app",
+      "solidityFramework": "hardhat",
+      "packageManager": "npm"
+    },
     "rename": {
       "HederaLendingTemplate": {
         "to": "{{projectName}}",
         "paths": ["."]
       }
     },
+    "instructions": [
+      "+Fill in your Hedera testnet credentials: copy .env.example to .env",
+      "Fund the deployer account from the Hedera Portal faucet",
+      "Deploy: {pm} run deploy",
+      "Seed the SaucerSwap pool: {pm} run bootstrap",
+      "Start the app: {pm} run dev"
+    ],
     "envVars": [
       {
         "key": "HEDERA_ACCOUNT_ID",
@@ -16,7 +33,7 @@
       },
       {
         "key": "HEDERA_PRIVATE_KEY",
-        "description": "Private key for the account above (ECSA hex or DER — never commit this)"
+        "description": "Private key for the account above (ECDSA hex or DER — never commit this)"
       },
       {
         "key": "NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID",
