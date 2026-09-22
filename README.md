@@ -1,5 +1,17 @@
 # Hedera Lending Market (scaffold-hbar template)
 
+**Created and maintained by LettermanLabs.** This is the
+[canonical repository](https://github.com/LettermanLabs/hedera-lending-market)
+for our Scaffold-HBAR Template Bounty project. Watch the
+[interactive walkthrough](https://lettermanlabs.com/Hedera/) and see
+[authorship and source provenance](PROVENANCE.md) for the dated development record.
+
+Reuse and forks are welcome under the [MIT license](LICENSE); retain the applicable
+copyright and license notices. If you enter a derivative in a competition, please
+credit this upstream project and distinguish your own contributions. Eligibility
+is determined by the competition organizers. Third-party components retain their
+own licenses and attribution.
+
 A collateralized lending market on Hedera. Suppliers deposit an HTS stable asset
 (USDX) and earn interest; borrowers lock native HBAR as collateral and borrow USDX
 against it. Borrowing power, withdrawals and liquidations are priced by the Pyth pull
