@@ -9,5 +9,5 @@
     "outDir": "dist",
     "types": ["node", "mocha"]
   },
-  "include": ["hardhat.config.ts", "./scripts", "./test", "./typechain-types"]
+  "include": ["hardhat.config.ts", "./scripts", "./test", "./test-fork", "./typechain-types"]
 }

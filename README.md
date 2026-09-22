@@ -177,6 +177,7 @@ build-review time — see `packages/hardhat/scripts/lib/config.ts`.
 ```bash
 npm install            # workspaces: hardhat + nextjs
 npm test               # 17 unit tests against local mocks
+npm run test:fork      # liquidation test vs real SaucerSwap mainnet reserves (fork)
 npm run compile        # compile contracts
 npm run export-abis    # regenerate packages/nextjs/contracts/abis (after contract changes)
 npm run lint           # tsc (nextjs) + eslint
@@ -210,10 +211,19 @@ testnet factory's pair contracts are no longer authorized to self-associate via 
 precompile, and SaucerSwap's canonical docs no longer publish testnet contract tables.
 `npm run bootstrap` detects this, prints an explanation, and exits cleanly; on networks
 where the factory is functional (mainnet: V1 RouterV3 `0.0.3045981`) the same script
-creates and seeds the WHBAR/USDX pair automatically. Per the bounty brief, a read-only
-testnet integration (live router quotes) plus the unit-tested swap path is the fallback
-— a forked-mainnet liquidation test against SaucerSwap's real WHBAR/USDC liquidity is the
-planned strengthening of this evidence.
+creates and seeds the WHBAR/USDX pair automatically.
+
+**Forked-mainnet evidence.** `npm run test:fork` forks Hedera mainnet
+(`@hashgraph/system-contracts-forking`) and settles a full liquidation against reserves
+transferred on-fork from the **real SaucerSwap WHBAR/USDC V1 pool (0.0.1462797,
+~2.85M WHBAR / ~268k USDC)**: supply → borrow → price drop → `liquidate` swaps the
+seized HBAR through the canonical SaucerSwap V1 AMM (math vendored verbatim from
+[saucerswaplabs-core](https://github.com/saucerswaplabs/saucerswaplabs-core); only the
+HTS-coupled token movements are adapted for the fork's emulation — see the labeled
+headers in `contracts/fork/`). The liquidator's profit is asserted against the AMM's
+real constant-product quote. This is the integration the bounty brief asks for when a
+protocol has no working testnet deployment: a forked-mainnet proof against real
+liquidity.
 
 ### Hermes status
 
