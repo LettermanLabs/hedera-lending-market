@@ -84,8 +84,10 @@ describe("LendingPool", () => {
       await pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR });
       await pool.connect(bob).borrow(10n * ONE_USDX, NO_UPDATE);
 
-      await expect(pool.connect(bob).withdrawCollateral(50n * ONE_HBAR + 1n, NO_UPDATE))
-        .to.be.revertedWithCustomError(pool, "InsufficientCollateral");
+      await expect(pool.connect(bob).withdrawCollateral(50n * ONE_HBAR + 1n, NO_UPDATE)).to.be.revertedWithCustomError(
+        pool,
+        "InsufficientCollateral",
+      );
     });
   });
 
@@ -217,7 +219,6 @@ describe("LendingPool", () => {
 
     it("repays debt, seizes collateral and pays the liquidator swap proceeds", async () => {
       const { alice, bob, usdx, pool, router } = await unhealthyFixture();
-      const price = 20_000_000n * 10n ** 10n;
       const borrowBefore = await pool.borrowBalanceOf(bob.address);
       const collateralBefore = await pool.collateralOf(bob.address);
       const balanceBefore = await usdx.balanceOf(alice.address);
@@ -226,9 +227,10 @@ describe("LendingPool", () => {
       const minOut = 13n * ONE_USDX;
       const deadline = BigInt(await time.latest()) + 300n;
       await usdx.connect(alice).approve(await pool.getAddress(), 10n * ONE_USDX);
-      await expect(
-        pool.connect(alice).liquidate(bob.address, 10n * ONE_USDX, minOut, deadline, NO_UPDATE),
-      ).to.emit(pool, "Liquidated");
+      await expect(pool.connect(alice).liquidate(bob.address, 10n * ONE_USDX, minOut, deadline, NO_UPDATE)).to.emit(
+        pool,
+        "Liquidated",
+      );
 
       expect(await pool.borrowBalanceOf(bob.address)).to.equal(borrowBefore - 10n * ONE_USDX);
       expect(await pool.collateralOf(bob.address)).to.equal(collateralBefore - (525n * ONE_HBAR) / 10n);
@@ -248,7 +250,6 @@ describe("LendingPool", () => {
       await pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR });
       await pool.connect(bob).borrow(10n * ONE_USDX, NO_UPDATE);
 
-      const price = PRICE_025 * 10n ** 10n;
       await usdx.connect(alice).approve(await pool.getAddress(), 10n * ONE_USDX);
       const deadline = BigInt(await time.latest()) + 300n;
       await expect(
@@ -260,7 +261,6 @@ describe("LendingPool", () => {
       const { alice, bob, usdx, pool, pyth } = await unhealthyFixture();
       // Push the price down further: debt $18 vs threshold $12 (100 HBAR * $0.15 * 0.8).
       await pyth.setPrice(15_000_000n);
-      const price = 15_000_000n * 10n ** 10n;
 
       const deadline = BigInt(await time.latest()) + 300n;
       await usdx.connect(alice).approve(await pool.getAddress(), 18n * ONE_USDX);

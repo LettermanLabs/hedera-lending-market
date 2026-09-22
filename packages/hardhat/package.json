@@ -12,7 +12,7 @@
     "bootstrap": "hardhat run scripts/bootstrap.ts --network hederaTestnet",
     "associate": "hardhat run scripts/associate.ts --network hederaTestnet",
     "export-abis": "hardhat run scripts/exportAbis.ts --no-compile",
-    "lint": "prettier --check 'contracts/**/*.sol' && eslint ."
+    "lint": "prettier --check 'contracts/**/*.sol' 'scripts/**/*.ts' 'test/**/*.ts' && eslint ."
   },
   "dependencies": {
     "@hiero-ledger/sdk": "^2.58.0",

@@ -33,7 +33,7 @@ async function main() {
   await associateIfNeeded(WHBAR_TOKEN_ID);
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

@@ -89,13 +89,7 @@ contract LendingPool is ReentrancyGuard {
     error HealthyPosition();
     error TransferFailed();
 
-    constructor(
-        address _whbar,
-        address _usdx,
-        address _pyth,
-        bytes32 _hbarUsdPriceId,
-        address _saucerSwapRouter
-    ) {
+    constructor(address _whbar, address _usdx, address _pyth, bytes32 _hbarUsdPriceId, address _saucerSwapRouter) {
         whbar = IWHBAR(_whbar);
         usdx = IERC20(_usdx);
         pyth = IPyth(_pyth);
