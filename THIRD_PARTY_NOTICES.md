@@ -14,6 +14,8 @@ Historical upstream attribution:
 
 - [SaucerSwap core](https://github.com/saucerswaplabs/saucerswaplabs-core), including
   `UniswapV2Pair.sol`, libraries and interfaces.
+- [SaucerSwap periphery](https://github.com/saucerswaplabs/saucerswap-periphery),
+  the router and quote-library source identified by the historical `ForkSwapRouter.sol`.
 - [Uniswap V2 core](https://github.com/Uniswap/v2-core), the antecedent of that AMM.
 
 The prior fixture adapted HTS LP creation and token movement for local emulation.
