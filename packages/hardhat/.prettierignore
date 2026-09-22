@@ -1,0 +1,3 @@
+# vendored verbatim from saucerswaplabs — keep byte-identical to upstream
+contracts/fork/libraries/
+contracts/fork/interfaces/

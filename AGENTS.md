@@ -62,6 +62,7 @@ testnet. Read this before changing code.
 | --- | --- |
 | `contracts/LendingPool.sol` → `updatePrice` | Pyth pull oracle (HBAR/USD) |
 | `contracts/LendingPool.sol` → `liquidate` | SaucerSwap V1 router (`swapExactETHForTokens`, payable ETH leg) |
+| `contracts/fork/*` + `test-fork/` | Vendored SaucerSwap V1 AMM (verbatim math) for the mainnet-fork liquidation test (`npm run test:fork`); only HTS-coupled parts adapted, see file headers |
 | `contracts/LendingPool.sol` → `associateTokens` | HTS precompile `0x167` |
 | `scripts/deploy.ts` | HTS `TokenCreateTransaction`, HCS `TopicCreateTransaction` |
 | `app/api/activity/route.ts` | HCS `TopicMessageSubmitTransaction` (server-side operator) |
@@ -74,4 +75,5 @@ testnet. Read this before changing code.
 - The mock SaucerSwap router is fixed-rate and needs a USDX float — see the fixture in
   `test/LendingPool.ts`.
 - Before submitting changes: `npm test && npm run lint && npm run build` must all pass,
-  and `./self-check.sh` should stay green.
+  `npm run test:fork` must pass against Hedera mainnet, and `./self-check.sh` should
+  stay green. Fork tests need network access to `mainnet.hashio.io` and the mirror node.
