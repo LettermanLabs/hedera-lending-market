@@ -1,14 +1,14 @@
-# Agent guide
+# Development notes
 
-This is a scaffold-hbar external lending template for **Hedera testnet**. Read the
-README for setup, required API access and limits of the local fork-harness evidence.
+This project targets **Hedera testnet**. Start with the README for setup and
+integration status. Use these notes when changing contracts, scripts, or the app.
 
 ## Layout and commands
 
 - `packages/hardhat`: Solidity, local/fork tests, deployment/bootstrap and ABI export.
 - `packages/nextjs`: Next.js App Router, wagmi/RainbowKit, server price/HCS routes.
-- `template.json`: current scaffold CLI manifest with npm-only capabilities,
-  directory-based rename map, env descriptions and `outro.sections`.
+- `template.json`: scaffold CLI options, package renaming, environment variables,
+  and setup instructions.
 
 Use Node 22.14+ or 24 LTS and `npm` 10+. Root commands:
 
@@ -16,18 +16,18 @@ Use Node 22.14+ or 24 LTS and `npm` 10+. Root commands:
 | --- | --- |
 | `npm ci` | Install locked workspace dependencies |
 | `npm run compile` / `npm run export-abis` | Compile contracts, then refresh frontend ABIs |
-| `npm run test` | Contract, app/server, and tooling regression tests |
+| `npm run test` | Contract, app/server, and deployment helper tests |
 | `npm run test:fork` | Network-dependent Hedera mainnet-fork liquidation and ecosystem checks |
 | `npm run lint` / `npm run build` | Both workspace type/lint checks; production app build |
 | `npm run check` | App validation (also works after CLI consumes the manifest) |
 | `npm run check:template` / `./self-check.sh` | Strict template source validation; manifest required |
 | `npm run audit:production` | Production dependency audit, high/critical gate |
 | `npm run dev` | Local app, usable without deployment credentials |
-| `npm run deploy` | Paid testnet deployment; resumable progress journal |
-| `npm run bootstrap` | Paid attempt to create/seed a testnet swap route |
+| `npm run deploy` | Deploy to testnet; saves progress for retries |
+| `npm run bootstrap` | Create and seed a testnet swap route |
 | `npm run associate` | Associate the configured operator with USDX/WHBAR |
 
-## Invariants
+## Rules to preserve
 
 1. Never commit secrets, `.env`, `.env.local`, deployment records or server journals.
    Deploy reads root `.env`; Next.js server credentials are configured separately in
@@ -50,17 +50,17 @@ Use Node 22.14+ or 24 LTS and `npm` 10+. Root commands:
    journal steps require reconciliation; completed seeds must not run twice. Preserve
    custom environment entries when updating generated addresses.
 
-## Change validation
+## Before opening a pull request
 
-After ABI changes run compile + export. Unit tests mock integrations; add regressions
-for accounting/unit/receipt bugs, then run tests, lint and build. Check configured and
-unconfigured pages in a real browser because a successful build does not prove boot.
+After ABI changes, compile and export the updated ABIs. Add regression tests for
+accounting, unit conversion, or receipt bugs, then run tests, lint, and build.
+Check both configured and unconfigured pages in a browser.
 Run the separate fork test for contract/integration changes when the RPC is available.
 
-Keep claims precise: the fork liquidation test uses mainnet HTS asset emulation,
-a locally deployed MIT constant-product harness with seeded reserves, and a mock
-oracle. That liquidation is not executed through the deployed SaucerSwap router.
-Any read-only deployed-contract check is separate evidence. Preserve the historical
-GPL attribution in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and its license
-copy; replacing fixtures does not relicense older revisions. Historical testnet links
-do not validate a newly changed LendingPool contract.
+The fork liquidation test uses emulated mainnet HTS assets, a local constant-product
+harness, and a mock oracle. The deployed SaucerSwap router is checked separately
+with read-only calls. If you change LendingPool, test a fresh deployment; the old
+testnet links refer to the previous bytecode.
+
+Keep the GPL attribution in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and
+its license copy. They apply to fixtures in earlier revisions.

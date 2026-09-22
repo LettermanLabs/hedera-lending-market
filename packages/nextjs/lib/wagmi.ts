@@ -5,7 +5,7 @@ import { hederaTestnet } from "./chain";
 
 const projectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID?.trim();
 
-// An injected-only wallet list avoids initializing WalletConnect with a fake key.
+// Enable WalletConnect only when a project ID is configured.
 export const config = getDefaultConfig({
   appName: "Hedera Lending Market",
   projectId: projectId ?? "injected-only",

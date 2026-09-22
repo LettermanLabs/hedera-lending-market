@@ -1,63 +1,41 @@
-# Authorship and source provenance
+# Project history and credits
 
 Hedera Lending Market was developed by **LettermanLabs** for the 2026
-Scaffold-HBAR Template Bounty. The copyright notice for original LettermanLabs
-work is **Copyright (c) 2026 LettermanLabs**, as recorded in [LICENSE](LICENSE).
+Scaffold-HBAR Template Bounty. Original project code is copyright 2026
+LettermanLabs and available under the [MIT license](LICENSE).
 
-- Canonical source: <https://github.com/LettermanLabs/hedera-lending-market>
+- Source: <https://github.com/LettermanLabs/hedera-lending-market>
 - Project walkthrough: <https://lettermanlabs.com/Hedera/>
 - Citation metadata: [CITATION.cff](CITATION.cff)
 - Bounty requirements: [Hedera's official brief](https://hedera.com/blog/scaffold-hbar-template-bounty/)
 
 ## Development record
 
-This record was assembled on September 22, 2026. The fixed commit links below
-identify exact source revisions; branch names can advance over time.
+These links record development milestones on September 22, 2026.
 
 | Record | Reference |
 | --- | --- |
 | GitHub repository creation | Repository ID `1380738675`; GitHub API `created_at`: `2026-09-22T01:52:27Z` ([metadata](https://api.github.com/repos/LettermanLabs/hedera-lending-market)) |
 | Initial source commit | [`3bc6f51525c9dff91c6a356829432a4d8dc2d1e3`](https://github.com/LettermanLabs/hedera-lending-market/commit/3bc6f51525c9dff91c6a356829432a4d8dc2d1e3) |
-| Default branch before this provenance record | [`82ac252d2f83d161d52ae5d6766e1b7556f44ef6`](https://github.com/LettermanLabs/hedera-lending-market/commit/82ac252d2f83d161d52ae5d6766e1b7556f44ef6) |
-| Accounting, integration, and reproducibility improvements | [Pull request #1](https://github.com/LettermanLabs/hedera-lending-market/pull/1); source revision [`4edb6a07e1bcc182485589189531feaf43a62bdc`](https://github.com/LettermanLabs/hedera-lending-market/commit/4edb6a07e1bcc182485589189531feaf43a62bdc) |
+| Initial documentation revision | [`82ac252d2f83d161d52ae5d6766e1b7556f44ef6`](https://github.com/LettermanLabs/hedera-lending-market/commit/82ac252d2f83d161d52ae5d6766e1b7556f44ef6) |
+| Accounting and deployment updates | [Pull request #1](https://github.com/LettermanLabs/hedera-lending-market/pull/1) |
+| Project credits | [Pull request #2](https://github.com/LettermanLabs/hedera-lending-market/pull/2) |
+| Archived source checkpoint | [`bounty-provenance-2026-09-22`](https://github.com/LettermanLabs/hedera-lending-market/releases/tag/bounty-provenance-2026-09-22) |
 
-Pull request #1 was open when this record was assembled; the linked source revision is
-development evidence, not a claim that those changes were merged or submitted.
-Repository creation is not the date it became public. Git author/committer dates
-are supplied by clients, so they should be considered alongside GitHub-hosted PR,
-review, workflow, and submission records, not as independent proof of authorship.
-This document does not establish that the organizers have received or accepted
-a bounty submission.
+The archived checkpoint predates the merge of PR #1. Repository creation and
+commit dates describe development history; they are not submission receipts.
 
-## Reuse, credit, and competition entries
+## Reuse and credit
 
-The MIT license permits reuse, modification, distribution, and forks of the code
-it covers. Its copyright and permission notices must remain in copies or
-substantial portions. This document adds no restrictions to that license.
-
-Please identify this repository as the upstream source when presenting a
-derivative, and clearly describe what you contributed. A fork or copy does not
-establish that its submitter authored the upstream code. The bounty separately
-requires original work; the Hedera organizers determine whether any particular
-entry satisfies that requirement. This repository cannot technically prevent a
-copy, guarantee disqualification of another entry, or reserve the general idea
-of a lending market.
+You can reuse, modify, and fork the MIT code. Keep its copyright and permission
+notices. When presenting a derivative, please link to this repository and describe
+your own contributions. Competition eligibility is up to the organizers; this
+document adds no license restrictions.
 
 ## Third-party work
 
-The LettermanLabs authorship statement applies to original project contributions,
-not every dependency, protocol, logo, or upstream implementation. Preserve all
-applicable third-party notices. In particular, earlier revisions including
-`82ac252` contain SaucerSwap / Uniswap V2-derived test fixtures in
-`packages/hardhat/contracts/fork/` with their own GPL-3.0 notices. The root MIT
-license does not relicense that third-party code. Consult the file headers and
-revision-specific third-party notices when copying a particular revision.
-
-## If an entry misrepresents this work
-
-Keep the canonical repository link, exact commits, GitHub PR/workflow records,
-your submission receipt, and a concrete comparison of the copied material.
-Present that evidence to the Hedera DevRel team through the bounty's official
-correspondence or [Hedera support](https://hedera.com/support/), and ask them to
-apply the originality requirement. Ordinary licensed reuse is not itself proof
-of plagiarism or grounds for a copyright complaint.
+Dependencies and upstream code retain their own licenses. Earlier revisions,
+including `82ac252`, contain GPL-3.0 SaucerSwap / Uniswap V2 test fixtures in
+`packages/hardhat/contracts/fork/`. The root MIT license does not cover those
+fixtures. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the file headers
+when using an older revision.

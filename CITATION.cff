@@ -1,9 +1,9 @@
 cff-version: 1.2.0
-message: "Please cite LettermanLabs and this canonical repository when describing or building on Hedera Lending Market."
+message: "If you use this project, please credit LettermanLabs and link to this repository."
 type: software
 title: "Hedera Lending Market"
 authors:
   - name: "LettermanLabs"
 repository-code: "https://github.com/LettermanLabs/hedera-lending-market"
 url: "https://lettermanlabs.com/Hedera/"
-abstract: "A scaffold-hbar lending template developed by LettermanLabs for Hedera testnet. Consult the source notices for third-party components and the README for integration limitations."
+abstract: "A Hedera testnet lending market with HTS assets, HBAR collateral, Pyth prices, SaucerSwap liquidations, and an HCS activity feed."

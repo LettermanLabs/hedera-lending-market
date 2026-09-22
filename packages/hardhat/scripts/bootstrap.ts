@@ -1,4 +1,4 @@
-/** Seeds the testnet WHBAR/USDX pair; never treats a failed bootstrap as success. */
+/** Seeds the testnet WHBAR/USDX pair and records only confirmed completion. */
 import { ethers } from "hardhat";
 import { TokenAssociateTransaction } from "@hiero-ledger/sdk";
 import { AMM_SEED_HBAR_WEI, TESTNET } from "./lib/config";
@@ -22,7 +22,7 @@ interface HermesPrice {
   expo: number;
 }
 
-/** Bootstrap uses the same configurable Hermes source as the app. No guessed ratio. */
+/** Fetch a fresh seed ratio from the same Hermes source configured for the app. */
 async function fetchHbarUsd(): Promise<HermesPrice> {
   const base = process.env.HERMES_URL || "https://hermes.pyth.network";
   const url = new URL("v2/updates/price/latest", base.endsWith("/") ? base : `${base}/`);
