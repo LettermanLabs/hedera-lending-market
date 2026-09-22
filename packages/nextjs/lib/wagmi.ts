@@ -1,14 +1,18 @@
 import { getDefaultConfig } from "@rainbow-me/rainbowkit";
+import { injectedWallet } from "@rainbow-me/rainbowkit/wallets";
+import { http } from "wagmi";
 import { hederaTestnet } from "./chain";
 
-/**
- * RainbowKit + wagmi config. A demo project id keeps the app bootable without
- * WalletConnect credentials; set NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID to enable
- * HashPack and other WalletConnect wallets.
- */
+const projectId = process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID?.trim();
+
+// An injected-only wallet list avoids initializing WalletConnect with a fake key.
 export const config = getDefaultConfig({
   appName: "Hedera Lending Market",
-  projectId: process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID ?? "hedera-lending-market-demo",
+  projectId: projectId ?? "injected-only",
+  wallets: projectId
+    ? undefined
+    : [{ groupName: "Browser wallets", wallets: [injectedWallet] }],
   chains: [hederaTestnet],
+  transports: { [hederaTestnet.id]: http() },
   ssr: true,
 });

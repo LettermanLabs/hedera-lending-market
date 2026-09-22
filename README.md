@@ -1,240 +1,247 @@
-# Hedera Lending Market (scaffold-hbar template)
+# Hedera Lending Market
 
-A collateralized lending market on Hedera. Suppliers deposit an HTS stable asset
-(USDX) and earn interest; borrowers lock native HBAR as collateral and borrow USDX
-against it. Borrowing power, withdrawals and liquidations are priced by the Pyth pull
-oracle, and liquidations settle by seizing collateral and swapping it back to USDX on
-SaucerSwap V1. Market activity is mirrored to an HCS topic, so there is a public,
-consensus-timestamped feed of everything that happens on the market.
+A scaffold-hbar lending template for Hedera testnet. Supply six-decimal HTS USDX,
+lock native HBAR, borrow against Pyth HBAR/USD, and liquidate through a SaucerSwap
+V1 route. The optional HCS feed records verified pool events with consensus timestamps.
 
-Scaffold it with one command:
+The app boots without credentials. Executing loans needs a deployed pool, an
+associated wallet, testnet funds and an authorized Hermes price service. Live
+liquidation additionally needs a seeded swap route; see the testnet limitation below.
 
-```bash
-npm create scaffold-hbar@latest my-lending-market -- --template <your-org>/hedera-lending-market
-```
+## Run locally
 
-External templates run from any public GitHub repo, so there is no PR into
-scaffold-hbar to wait on. This repository is the template: `packages/hardhat` has the
-contracts and deploy pipeline, `packages/nextjs` has the app.
-
-## Why each integration matters
-
-Each dependency does real work here. Take one out and the market breaks:
-
-| Integration | Role | What breaks without it |
-| --- | --- | --- |
-| Pyth (pull oracle) | Every `borrow`, `withdrawCollateral` and `liquidate` submits a signed HBAR/USD price update from Hermes inside the transaction and enforces freshness (`getPriceNoOlderThan(120s)`). | No borrowing power and no liquidation trigger; the market cannot price risk. |
-| SaucerSwap V1 (DEX) | `liquidate` seizes HBAR collateral and swaps it to USDX through the V1 router's payable ETH entry point in the same transaction; proceeds pay the liquidator. | No liquidation path, so underwater debt can never be settled. |
-| HTS | USDX is a native HTS token created by the deploy script and used through its ERC-20 facade; the pool associates WHBAR/USDX (and the SaucerSwap LP token) via the `0x167` precompile. | No borrowable asset and no collateral custody. |
-| HCS | The deploy script creates an activity topic; the Next.js API mirrors market events to it; the Activity page reads it back through the mirror node. | No auditable activity trail. |
-| Mirror node | The Liquidation Watch page finds borrowers by scanning `Borrowed` events via the mirror node REST API. | The liquidation UI has no index of positions. |
-
-Three Hedera services run in the same flow: HTS (token plus associations), HCS
-(submit plus mirror-node subscribe) and EVM contracts (all accounting).
-
-## Prerequisites
-
-- Node 20.18.3 or later, npm 10+
-- A funded Hedera testnet account (create one at the [Hedera Portal](https://portal.hedera.com) and use the faucet button there)
-- Optional: a [WalletConnect/Reown](https://cloud.reown.com) project ID so HashPack can connect through RainbowKit. MetaMask works without it.
-
-## Setup (about 5 minutes)
+Use **Node.js 22.14+ or 24 LTS** and `npm` 10+. From a public version of this repository:
 
 ```bash
-# 1. Fill in your testnet credentials at the repo ROOT (gitignored)
-cp .env.example .env
-#    HEDERA_ACCOUNT_ID=0.0.XXXXXX
-#    HEDERA_PRIVATE_KEY=0x...
-
-# 2. Deploy: creates the HTS USDX token, deploys the pool, seeds liquidity,
-#    creates the HCS topic, and writes packages/nextjs/.env.local
-npm run deploy
-
-# 3. Seed the SaucerSwap WHBAR/USDX pool so liquidations have a swap route
-npm run bootstrap
-
-# 4. Run the app
-npm run dev        # http://localhost:3000
+npx create-scaffold-hbar@latest my-lending-market --template LettermanLabs/hedera-lending-market --network testnet --skip-hedera-skills
+cd my-lending-market
+npm run dev
 ```
 
-Then, in the app (MetaMask or HashPack connected to Hedera Testnet, chain 296):
+For an authenticated clone, run `npm ci` first. Open [localhost:3000](http://localhost:3000).
+The unconfigured market and Activity pages explain what is needed; reading the UI
+does not require an operator private key. A private GitHub repository cannot be used
+by an unauthenticated public-template evaluator.
 
-1. Click *Claim 250 USDX* on the faucet (first time only: associate the token, see below).
-2. Supply USDX to the pool to start earning interest.
-3. Deposit HBAR collateral, then borrow USDX. A Pyth price update is pulled into the borrow transaction automatically.
-4. Watch your health factor. Below 1.00, the position shows up in *Liquidation watch* and anyone can settle it.
-5. Open the *Activity (HCS)* page for the consensus-timestamped event feed.
+## Configure and deploy to testnet
 
-### Token association (one time, per wallet)
+1. Create and fund an **ECDSA Hedera testnet account** using the
+   [Hedera Portal](https://portal.hedera.com). Copy the root `.env.example` to `.env`
+   and fill in `HEDERA_ACCOUNT_ID` and `HEDERA_PRIVATE_KEY`.
+2. Configure `HERMES_URL` / `PYTH_API_KEY` for bootstrap. The Pyth gateway now
+   requires API authorization; see [Pyth's upgrade guide](https://docs.pyth.network/price-feeds/core/upgrade/preparing).
+3. Run `npm run deploy`. This spends testnet HBAR to create USDX, deploy the pool,
+   associate tokens, seed borrow liquidity/faucet, and create a topic whose submit key
+   is restricted to the deployment operator. It writes a progress journal at
+   `packages/hardhat/deployments/hedera-testnet.json` and merges public addresses into
+   `packages/nextjs/.env.local`.
+4. Add the server settings below to `packages/nextjs/.env.local`. The root `.env`
+   is read by deployment scripts only. Existing custom RPC, Reown, and server settings
+   are preserved when deployment writes new addresses.
+5. Run `npm run bootstrap` to attempt pair creation and liquidity seeding, then
+   `npm run dev`. Bootstrap failure exits nonzero; it does not establish a live route.
 
-USDX is an HTS token, so a wallet has to associate it before it can receive any.
-Two ways:
+A deployment supplies 400,000 USDX to the pool (the deployer holds its supplier shares)
+and adds 100,000 USDX as faucet funds.
+Bootstrap requests 100 HBAR and the corresponding six-decimal USDX amount at a fresh
+Hermes price. LP tokens remain in the pool contract. Scripts are testnet-only.
 
-- HashPack: account menu, *Associate token to account*, paste the USDX token id
-  printed by `npm run deploy` (also in `packages/hardhat/deployments/hedera-testnet.json`).
-- CLI: put the wallet's credentials in `.env` and run `npm run associate`.
+### Server settings
 
-This is normal Hedera DeFi UX rather than a quirk of the template; the deploy README
-walks through the full HTS lifecycle on purpose.
+| Variable | Location / purpose |
+| --- | --- |
+| `HERMES_URL` | Root `.env` for bootstrap; Next.js `.env.local` for the server price proxy. Defaults to `https://hermes.pyth.network`. |
+| `PYTH_API_KEY` | Server-only Hermes Bearer key. `HERMES_API_KEY` is also accepted. Never prefix a secret with `NEXT_PUBLIC_`. |
+| `HEDERA_ACCOUNT_ID`, `HEDERA_PRIVATE_KEY` | Root `.env` for deploy; explicitly configure separately in Next.js `.env.local` to enable optional HCS submissions. Use the topic's submit-key account. |
+| `ACTIVITY_STORE_DIR` | Next.js server's writable persistent journal directory; default `.data/activity`. Persist it across restarts. |
+| `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` | Optional Reown project ID in Next.js `.env.local` for WalletConnect wallets. |
+| `HEDERA_RPC_URL` | Optional deployment testnet JSON-RPC override. |
+| `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_MIRROR_NODE` | Optional public testnet endpoints used by the app. |
 
-## Architecture
+`/api/price-update` keeps Hermes credentials on the server. A missing/invalid key
+produces a visible setup error; the app does not fabricate signed updates or prices.
+
+`/api/activity` accepts a transaction hash, verifies a recent successful direct pool
+transaction, and derives messages from the receipt's pool events. It checks that the
+HCS topic has a restricted submit key, deduplicates transactions on disk and caps
+paid submissions at 30 verified transactions per UTC hour. Use one durable shared
+journal directory for all writers; ephemeral/serverless per-instance storage is not
+sufficient. An uncertain paid submission is retained for inspection and is not
+blindly retried. The feed is best effort: a successful loan remains successful if
+HCS is unavailable. It is not a complete autonomous chain indexer.
+
+### Resuming deployment
+
+Completed journal steps are skipped, including seeds and topic creation. A pending
+step means submission or confirmation was interrupted: inspect its stored transaction
+hash/ID on Hashscan and reconcile the journal before retrying. Do not delete a pending
+step just to force a second payment. Unknown errors are surfaced; only an explicit
+`TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT` response is ignored.
+
+Old records without the journal, and records built from different contract bytecode,
+are rejected. Preserve the old record separately and deploy a fresh testnet pool to
+use corrected accounting; rerunning a script does not upgrade an existing contract.
+
+## Try the market
+
+Connect a supported EVM wallet to Hedera Testnet (chain 296). Associate USDX before
+receiving it: the token ID is printed by deploy, and HashPack supports manual token
+association. Alternatively use the wallet's own testnet credentials with
+`npm run associate`; this only associates that account.
+
+1. Claim 250 USDX from the faucet (one claim per account per hour).
+2. Approve and supply USDX.
+3. Deposit HBAR collateral and borrow USDX; a fresh signed Pyth update accompanies borrowing.
+4. Repay debt, withdraw supplied USDX, or withdraw healthy collateral.
+5. Inspect Liquidation Watch and the optional Activity feed. A live liquidation needs
+   a working WHBAR/USDX pool with sufficient reserves.
+
+Transactions await successful receipts. Rejected/reverted transactions must not be
+reported as successful activity. HBAR wallet transaction `value` has **18 decimals**;
+contract calldata and `msg.value` use **8-decimal tinybars**. USDX has **6 decimals**,
+and internal USD price/index values have **18**.
+
+## Architecture and risk model
+
+| Integration | Function |
+| --- | --- |
+| Pyth | Fresh HBAR/USD pull updates for borrowing, collateral withdrawal and liquidation; 120-second freshness limit. |
+| SaucerSwap V1 | Liquidation swaps seized native HBAR through `swapExactETHForTokens`, path `[WHBAR, USDX]`. The router wraps HBAR. |
+| HTS | Deploy creates USDX, account/contract associations authorize receipt, and transfers use the ERC-20 facade. |
+| HCS | Optional restricted-submit topic containing receipt-derived activity messages. |
+| Mirror node | Reads topic messages and indexes borrower events for Liquidation Watch. |
+
+The pool holds native HBAR. Borrow/supply balances use scaled shares and indexes.
+Borrow rate is 2% + 38% × utilization per year; 10% of earned interest goes to
+protocol reserves. Interest is simple within each interval and compounds across
+accrual intervals. Views project pending interest; balance-changing operations persist
+it. Borrow and withdrawal limits use 75% maximum LTV. Liquidation
+eligibility and displayed health use the separate 80% threshold, with a 5% bonus.
+
+Collateral-exhausting liquidation clears the residual debt, consumes protocol reserves
+first, then reduces supplier claims proportionally. A complete supplier loss retires
+old shares so a new deposit cannot revive wiped claims. Faucet funds and protocol
+reserves are excluded from borrowable/withdrawable cash.
+
+Liquidators provide USDX repayment and receive swap proceeds. They must consider
+router liquidity, slippage, fees and oracle/DEX price differences; the bonus alone
+does not guarantee profit. USDX is assumed to be worth $1 and is a test asset.
+Collateral earns no yield. Testnet faucet/admin privileges are intentional template
+simplifications, not production lending controls.
 
 ```
-                 ┌─────────────────────────────── Hedera Testnet ───────────────────────────────┐
-                 │                                                                               │
-  User (Next.js) │   LendingPool (EVM)                                                           │
-  ──────────────►│  ┌──────────────────────────────────────────┐                                 │
-   borrow()      │  │ · accrue() interest (utilization-based)  │                                 │
-   + Pyth update │  │ · borrow / repay / supply / withdraw     │        Pyth contract           │
-                 │  │ · collateral checks vs Pyth HBAR/USD     │◄────── pull oracle ──────────► Hermes
-   deposit() ───►│  │ · deposit: native HBAR custody           │        (0.0.3042133)           │
-                 │  │ · liquidate: seize HBAR ─► SaucerSwap    │                                 │
-                 │  │   V1 router (payable ETH) ─► USDX        │        SaucerSwap V1 router    │
-                 │  │   ─► liquidator                          │        (0.0.19264)             │
-                 │  └──────┬───────────────▲──────────────────┘                                 │
-                 │         │ HTS 0x167     │ WHBAR path entry (0.0.15058)                        │
-                 │    USDX (HTS, created by deploy)                                                  │
-                 │                                                                               │
-                 └───────────────────────────────────────────────────────────────────────────────┘
-        Activity feed: market events ──► HCS topic (created by deploy) ──► mirror node REST ◄── Activity page
+packages/hardhat/contracts/LendingPool.sol   Accounting, collateral, HTS, Pyth, swaps
+packages/hardhat/contracts/fork/             Original MIT constant-product test harness
+packages/hardhat/test/                      Local accounting/integration regressions
+packages/hardhat/test-fork/                 Network-dependent ecosystem/fork checks
+packages/hardhat/scripts/                   Deployment, associations, bootstrap, ABIs
+packages/nextjs/app/api/                    Server price proxy and verified HCS writer
+packages/nextjs/components/                 Market, positions, liquidations and activity
+packages/nextjs/lib/                        Units, wallet receipts, mirror/oracle helpers
 ```
 
-### Repository layout
-
-```
-├── template.json            # scaffold-hbar manifest (capabilities, rename map, env vars)
-├── packages/
-│   ├── hardhat/
-│   │   ├── contracts/
-│   │   │   ├── LendingPool.sol              # the market (accounting, risk, liquidation)
-│   │   │   ├── interfaces/                  # IWHBAR, ISaucerSwapRouter, IHederaTokenService (0x167)
-│   │   │   ├── mocks/                       # MockPyth / MockWHBAR / MockUSDX / MockSaucerSwapRouter
-│   │   │   └── fork/                        # vendored SaucerSwap V1 AMM for the mainnet-fork test
-│   │   ├── test/LendingPool.ts              # 17 unit tests (interest, liquidation math, faucet)
-│   │   ├── test-fork/liquidation.fork.test.ts  # liquidation vs real WHBAR/USDC reserves (fork)
-│   │   └── scripts/
-│   │       ├── deploy.ts                    # HTS token + pool + HCS topic + env wiring
-│   │       ├── bootstrap.ts                 # seeds the SaucerSwap WHBAR/USDX pool
-│   │       ├── associate.ts                 # one-time token association helper
-│   │       └── exportAbis.ts                # regenerates frontend ABIs
-│   └── nextjs/
-│       ├── app/                             # Market page, Activity page, /api/activity (HCS submit)
-│       ├── components/                      # MarketStats, PositionPanel, LiquidationWatch, ...
-│       ├── lib/                             # wagmi config, Hermes client, mirror node client
-│       └── contracts/abis/                  # generated ABIs
-├── AGENTS.md                                # guide for AI-assisted development
-└── self-check.sh                            # eligibility-gate self check
-```
-
-## How the market works
-
-- **Interest.** Utilization-based linear model: `borrow APY = 2% + 38% × utilization`.
-  Interest accrues into a borrow index and a supply index (Compound-style scaled
-  balances). 10% of interest goes to protocol reserves.
-- **Risk.** Max LTV 75% (collateral factor), liquidation threshold 80%, 5% liquidation
-  bonus. Health factor = (collateral value × 75%) / debt value; below 1.00 a position
-  can be liquidated.
-- **Liquidation.** Anyone calls `liquidate(borrower, repayAmount, minUsdxOut, deadline, priceUpdate)`:
-  1. A fresh Pyth price proves the position is underwater.
-  2. The liquidator's USDX repays part or all of the debt.
-  3. Native HBAR collateral worth `repay × 1.05` is seized and swapped through
-     SaucerSwap V1's payable ETH entry point (`swapExactETHForTokens`, path
-     `[WHBAR, USDX]`; the router wraps HBAR itself). `minUsdxOut` protects against
-     slippage and is quoted from the router first.
-  4. Swap proceeds go to the liquidator. The profit is the bonus plus any gap between
-     the oracle price and the pool price.
-
-### Testnet addresses (verified against the mirror node)
-
-| Contract | Hedera ID | EVM address |
-| --- | --- | --- |
-| Pyth oracle | `0.0.3042133` | `0xa2aa501b19aff244d90cc15a4cf739d2725b5729` |
-| HBAR/USD feed id | — | `0x3728e591097635310e6341af53db8b7ee42da9b3a8d918f9463ce9cca886dfbd` |
-| SaucerSwap V1 router (legacy testnet, read-only) | `0.0.19264` | `0x0000000000000000000000000000000000004b40` |
-| WHBAR (HTS facade, V1 swap path entry) | `0.0.15058` | `0x0000000000000000000000000000000000003ae2` |
-
-Sources for these: the Pyth docs (EVM contract addresses page) and the SaucerSwap
-contract deployments page, checked against `packages/hardhat/scripts/lib/config.ts`.
-
-### Assumptions and simplifications
-
-Read this before adapting the pool to anything real:
-
-- USDX is treated as $1.00. The template deliberately uses one oracle feed; a
-  production market would also value the debt asset from a Pyth USDC/USD feed.
-- Simple interest (APY / seconds-per-year), not per-block compounding.
-- Collateral earns no yield; it sits as native HBAR in the pool.
-- LP tokens from `bootstrap` are sent to the pool contract and stay there (testnet
-  convenience).
-- If collateral runs out before debt is covered, the shortfall is absorbed by the pool
-  (shared across suppliers).
-- The faucet exists so testnet users can borrow without hunting for funds. Turn it off
-  in production with `setFaucetEnabled(false)`.
-
-## Development
+## Development and validation
 
 ```bash
-npm install            # workspaces: hardhat + nextjs
-npm test               # 17 unit tests against local mocks
-npm run test:fork      # liquidation test vs real SaucerSwap mainnet reserves (fork)
-npm run compile        # compile contracts
-npm run export-abis    # regenerate packages/nextjs/contracts/abis (after contract changes)
-npm run lint           # tsc (nextjs) + eslint
-npm run build          # production build of the app
+npm ci
+npm run audit:production
+npm run compile
+npm run export-abis     # after contract ABI changes
+npm run test            # contracts + app/server + deployment helper regressions
+npm run lint            # both workspaces, including TypeScript
+npm run build
+npm run check           # app checks, including generated projects; no secrets required
+npm run check:template  # source repository only: additionally requires template.json
+npm run test:fork       # separate mainnet RPC/mirror-node dependent test
 ```
+
+The scaffold CLI consumes and removes `template.json` after validating it. Therefore
+`check` explicitly validates the app; `check:template` (or `./self-check.sh`) is the
+strict source-repository gate and fails when the manifest is missing. Generated app
+CI runs app checks, while this template repository's CI requires source validation.
+
+GitHub Actions runs local validation on push/PR and rejects high/critical production
+dependency advisories. Its manually dispatched workflow also runs the fork test. The self-check reports missing dependencies as a
+failure and identifies checks it cannot prove: public scaffolding, rendered browser
+behavior, real wallet flows, current testnet deployment evidence and bounty eligibility.
+
+Dependency audit status on September 22, 2026: the production-only audit reports no
+advisories. The full tree still reports 17 low-severity package entries stemming
+from the unpatched development dependency `elliptic`
+([GHSA-848j-6mx2-7j84 / CVE-2025-14505](https://github.com/advisories/GHSA-848j-6mx2-7j84))
+in the Hardhat 2/fork toolchain. The production SDK resolves ethers 6.17. Audit scope
+matters: the production result does not mean the full development tree has no findings.
+
+## Integration limits and evidence
+
+**SaucerSwap testnet:** the legacy V1 factory previously reverted while creating new
+pairs because of HTS association authorization. The script reports pair failure
+without claiming the route exists. Legacy testnet addresses remain configured for
+read-only inspection: router `0.0.19264`, WHBAR `0.0.15058`. Pyth's testnet address is
+`0xa2aa501b19aff244d90cc15a4cf739d2725b5729` (contract `0.0.3042133`), with HBAR/USD feed
+`0x3728e591097635310e6341af53db8b7ee42da9b3a8d918f9463ce9cca886dfbd`.
+Check [SaucerSwap deployments](https://docs.saucerswap.finance/developers/contracts)
+and [Pyth addresses](https://docs.pyth.network/price-feeds/core/contract-addresses/evm)
+before changing them.
+
+**What the ecosystem/fork test checks:** the suite separates two kinds of evidence:
+
+- Read-only calls to deployed SaucerSwap mainnet factory `0.0.1062784` and router
+  `0.0.3045981` discover the WHBAR/USDC pair and compare the router quote with an
+  independent reserve calculation at the same pinned block. These calls do not
+  send a transaction or execute a swap.
+- A local Hedera mainnet fork supplies HTS WHBAR/USDC assets from the real pair
+  (`0.0.1462797`) to a small, independently written MIT constant-product harness.
+  A mock oracle drives a price drop, and a local liquidation is checked against
+  exact debt, collateral, cash and swap-output assertions.
+
+The local harness uses fixed seeded reserves and test-only native/token float
+conversion. It implements no LP token, liquidity mint/burn, TWAP or flash-swap
+features. It is **not** SaucerSwap's production implementation. The local liquidation
+does not execute through the deployed SaucerSwap router, obtain a signed live Pyth
+update or create HTS pairs on the real network. Neither test sends a mainnet
+transaction. See the test source and [source-history notices](THIRD_PARTY_NOTICES.md).
+
+### Corrected deployment evidence (September 22, 2026)
+
+- [LendingPool 0.0.10660545](https://hashscan.io/testnet/contract/0.0.10660545)
+- [USDX 0.0.10660541](https://hashscan.io/testnet/token/0.0.10660541)
+- [Restricted HCS topic 0.0.10660569](https://hashscan.io/testnet/topic/0.0.10660569)
+  and [verified message readback](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10660569/messages)
+- [Deposit 1 HBAR](https://hashscan.io/testnet/transaction/0xf975a0b2dc24f3904953c3e9f6535ac114a4b5df2f9fc581b0b9f1c1848200e5)
+  and [withdraw it with zero debt and no oracle update](https://hashscan.io/testnet/transaction/0x6beac47adbcd5ab144b8498bdcfdc01bd22fc73081d73d3359ba788d4949ff0a)
+- [Supply 10 USDX](https://hashscan.io/testnet/transaction/0x828d4409113674259f27382f6c21deb9b60e0ab2e7bdeefd83a51b88d38f02d4)
+  and [withdraw 10 USDX](https://hashscan.io/testnet/transaction/0x6a600be5c7d70403eac9151eb3b549e6931d693d9b5ed53120d40e50992e36b1)
+- [Claim 250 USDX from the faucet](https://hashscan.io/testnet/transaction/0xa39a0b1272b324029c4058897d019d113b39e680f67881839d8b9f4098351ffd)
+
+These transactions were verified with RPC receipts and before/after balance assertions.
+The HCS API published the confirmed deposit as message 1, returned the same sequence
+on a duplicate request without resubmitting, and rejected caller-supplied event fields.
+The configured production build rendered the recorded message through the mirror node.
+Borrowing with a live signed Pyth update remains unverified without authorized Hermes
+access, and the testnet SaucerSwap route remains unavailable. The fork test covers liquidation only within the scope described above.
+
+Historical evidence below belongs to the earlier contract revision:
+
+- [Pool 0.0.10658737](https://hashscan.io/testnet/contract/0.0.10658737)
+- [USDX 0.0.10657747](https://hashscan.io/testnet/token/0.0.10657747)
+- [HCS topic 0.0.10658821](https://hashscan.io/testnet/topic/0.0.10658821) and
+  [mirror messages](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10658821/messages)
+- [Successful collateral deposit](https://hashscan.io/testnet/transaction/0xe4b40b39f05ee40a4fa8ae1eed1c4a1470717e149f5d7d0defe7586a693f0660)
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Symptom | Action |
 | --- | --- |
-| `insufficient Pyth fee` / stale price | The app fetches a fresh update per transaction. If the cached price is older than 120s, click *Update price* on the market page first. |
-| `faucet cooldown` | One claim per hour per account. |
-| USDX transfer fails with an association error | Associate the token (see *Token association*). |
-| HashPack does not appear in the wallet list | Set `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` (Reown Cloud) in `packages/nextjs/.env.local` and restart. |
-| `npm run deploy` reverts at `associateTokens` | Wrong network in `.env`, or the precompile call ran out of gas. Check the chain and retry. |
-
-## Evidence (Hedera testnet, deployer account 0.0.10653436)
-
-- LendingPool contract: [0.0.10658737](https://hashscan.io/testnet/contract/0.0.10658737)
-- USDX HTS token (created by `npm run deploy`): [0.0.10657747](https://hashscan.io/testnet/token/0.0.10657747)
-- HCS activity topic: [0.0.10658821](https://hashscan.io/testnet/topic/0.0.10658821), with [message #1 read back through the mirror node](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10658821/messages)
-- Collateral deposit (native HBAR into pool custody): [0xe4b40b39f05ee40a4fa8ae1eed1c4a1470717e149f5d7d0defe7586a693f0660](https://hashscan.io/testnet/transaction/0xe4b40b39f05ee40a4fa8ae1eed1c4a1470717e149f5d7d0defe7586a693f0660)
-- Pool token association (HTS precompile via HAPI): transactions on the [pool account](https://hashscan.io/testnet/account/0.0.10658737)
-- Live SaucerSwap testnet quote through the legacy V1 router (read-only):
-  `getAmountsOut(1 WHBAR → SAUCE) = 54.96 SAUCE` via router `0.0.19264`
-
-### SaucerSwap testnet status
-
-SaucerSwap's legacy testnet deployment cannot create new pairs anymore. The testnet
-factory's pair contracts are no longer authorized to self-associate through the HTS
-precompile, and SaucerSwap's canonical docs no longer list testnet contract tables.
-`npm run bootstrap` detects the failure, explains it, and exits cleanly. On networks
-where the factory works (mainnet V1 RouterV3 is `0.0.3045981`) the same script creates
-and seeds the WHBAR/USDX pair end to end.
-
-**Forked-mainnet evidence.** `npm run test:fork` forks Hedera mainnet with
-`@hashgraph/system-contracts-forking` and settles a full liquidation against reserves
-transferred on-fork from the real SaucerSwap WHBAR/USDC V1 pool (0.0.1462797, about
-2.85M WHBAR / 268k USDC at the time of writing). The flow is supply, borrow, price
-drop, then `liquidate` swaps the seized HBAR through the canonical SaucerSwap V1 AMM.
-The AMM math is vendored verbatim from
-[saucerswaplabs-core](https://github.com/saucerswaplabs/saucerswaplabs-core); only the
-HTS-coupled token movement is adapted for the fork's emulation (see the headers in
-`contracts/fork/`). The liquidator's profit is asserted against the AMM's
-constant-product quote. This matches the bounty rule for protocols without a working
-testnet deployment: a read-only or forked-mainnet integration.
-
-### Hermes status
-
-During the build window the public Hermes gateway (`hermes.pyth.network`) started
-returning `401` on the signed-update endpoint after Pyth's August 2026 upgrade. That
-affects every consumer of the public gateway, not just this template. The frontend
-reads `NEXT_PUBLIC_HERMES_URL` (default: the public gateway), so a paid or self-hosted
-Hermes instance drops in without code changes, and `bootstrap` falls back to CoinGecko
-for the initial pool ratio when Hermes is unreachable. The on-chain Pyth side (pull
-updates, `getPriceNoOlderThan` freshness checks, fee forwarding) is unaffected; it only
-needs some source of signed updates.
+| Hermes HTTP 401/403 | Configure authorized server `PYTH_API_KEY` and endpoint; restart/redeploy the Next.js server. |
+| Token association error | Associate USDX with the receiving wallet; unrelated association errors are not ignored. |
+| Bootstrap exits nonzero | Inspect the transaction and journal; do not assume liquidations can swap. Use the separate fork test for its stated scope. |
+| HCS unavailable | Check server-only credentials, topic submit key and durable journal permissions; the chain receipt remains the source of transaction truth. |
+| Pending deployment step | Reconcile the saved transaction against consensus before resubmission. |
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+Current LettermanLabs application, contracts and test harness are [MIT](LICENSE).
+Earlier revisions contained GPL-derived AMM fixtures; those were replaced, and their
+original licensing is preserved in repository history. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for historical attribution and notices.

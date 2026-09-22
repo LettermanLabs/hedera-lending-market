@@ -1,4 +1,6 @@
 import * as dotenv from "dotenv";
+import * as path from "path";
+import { parsePrivateKey } from "./scripts/lib/setup";
 import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-chai-matchers";
 import "@nomicfoundation/hardhat-network-helpers";
@@ -10,7 +12,7 @@ if (process.env.HEDERA_FORKING === "true") {
   require("@hashgraph/system-contracts-forking/plugin");
 }
 
-dotenv.config({ path: "../../.env" });
+dotenv.config({ path: path.join(__dirname, "../../.env") });
 
 const deployerKey = process.env.HEDERA_PRIVATE_KEY;
 
@@ -19,11 +21,6 @@ const config: HardhatUserConfig = {
     compilers: [
       {
         version: "0.8.24",
-        settings: { optimizer: { enabled: true, runs: 200 } },
-      },
-      {
-        // vendored SaucerSwap V1 sources (fork tests only)
-        version: "0.6.12",
         settings: { optimizer: { enabled: true, runs: 200 } },
       },
     ],
@@ -43,15 +40,9 @@ const config: HardhatUserConfig = {
           : undefined,
     },
     hederaTestnet: {
-      url: process.env.HEDERA_RPC_URL ?? "https://testnet.hashio.io/api",
+      url: process.env.HEDERA_RPC_URL || "https://testnet.hashio.io/api",
       chainId: 296,
-      accounts: deployerKey ? [deployerKey] : [],
-      gas: 2_000_000,
-    },
-    hederaMainnet: {
-      url: process.env.HEDERA_RPC_URL ?? "https://mainnet.hashio.io/api",
-      chainId: 295,
-      accounts: deployerKey ? [deployerKey] : [],
+      accounts: deployerKey ? [`0x${parsePrivateKey(deployerKey).toStringRaw()}`] : [],
       gas: 2_000_000,
     },
   },
