@@ -94,7 +94,7 @@ async function main() {
   console.log("\n✅ AMM bootstrap complete — the liquidation swap route is live.");
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

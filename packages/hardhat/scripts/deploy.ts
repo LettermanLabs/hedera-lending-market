@@ -10,18 +10,8 @@
  * Run: npm run deploy
  */
 import { ethers } from "hardhat";
-import {
-  TokenAssociateTransaction,
-  TokenCreateTransaction,
-  TopicCreateTransaction,
-} from "@hiero-ledger/sdk";
-import {
-  FAUCET_SEED_USDX,
-  POOL_LIQUIDITY_USDX,
-  TESTNET,
-  USDX_TOTAL_SUPPLY,
-  idToEvmAddress,
-} from "./lib/config";
+import { TokenAssociateTransaction, TokenCreateTransaction, TopicCreateTransaction } from "@hiero-ledger/sdk";
+import { FAUCET_SEED_USDX, POOL_LIQUIDITY_USDX, TESTNET, USDX_TOTAL_SUPPLY, idToEvmAddress } from "./lib/config";
 import { ethersSigner, hashscanContract, hashscanTx, hederaClient, requireEnv } from "./lib/setup";
 import { saveDeployment } from "./lib/record";
 
@@ -45,7 +35,7 @@ async function associateIfNeeded(tokenId: string): Promise<void> {
       .sign(operatorKey);
     await (await tx.execute(client)).getReceipt(client);
     console.log(`  associated ${tokenId} with operator`);
-  } catch (e) {
+  } catch {
     // TOKEN_ALREADY_ASSOCIATED — safe to ignore
     console.log(`  operator already associated with ${tokenId}`);
   }
@@ -145,7 +135,7 @@ async function main() {
   console.log("\nNext: npm run bootstrap   (seed the SaucerSwap WHBAR/USDX pool for liquidations)");
 }
 
-main().catch(error => {
+main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

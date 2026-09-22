@@ -6,11 +6,17 @@ import { TESTNET } from "./config";
 // Scripts run from packages/hardhat (npm workspace); the repo-root .env is two levels up.
 dotenv.config({ path: "../../.env" });
 
-export function requireEnv(): { accountId: AccountId; operatorKey: PrivateKey; accountIdString: string } {
+export function requireEnv(): {
+  accountId: AccountId;
+  operatorKey: PrivateKey;
+  accountIdString: string;
+} {
   const accountIdString = process.env.HEDERA_ACCOUNT_ID;
   const privateKey = process.env.HEDERA_PRIVATE_KEY;
   if (!accountIdString || !privateKey) {
-    throw new Error("Missing HEDERA_ACCOUNT_ID / HEDERA_PRIVATE_KEY. Copy .env.example to .env in the repo root and fill it in.");
+    throw new Error(
+      "Missing HEDERA_ACCOUNT_ID / HEDERA_PRIVATE_KEY. Copy .env.example to .env in the repo root and fill it in.",
+    );
   }
   return {
     accountIdString,
@@ -25,7 +31,9 @@ export function hederaClient(): Client {
 }
 
 export function ethersProvider(): JsonRpcProvider {
-  return new JsonRpcProvider(TESTNET.rpcUrl, TESTNET.chainId, { batchMaxCount: 1 });
+  return new JsonRpcProvider(TESTNET.rpcUrl, TESTNET.chainId, {
+    batchMaxCount: 1,
+  });
 }
 
 export function ethersSigner(): Wallet {
