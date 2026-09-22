@@ -27,7 +27,7 @@ market stops working:
 | Integration | Role | What breaks without it |
 | --- | --- | --- |
 | **Pyth** (pull oracle) | Every `borrow`, `withdrawCollateral` and `liquidate` submits a signed HBAR/USD price update from Hermes inside the transaction and enforces freshness (`getPriceNoOlderThan(120s)`). | No borrowing power, no liquidation trigger — the market cannot price risk. |
-| **SaucerSwap V1** (DEX) | `liquidate` seizes WHBAR collateral and swaps it to USDX through the SaucerSwap router in the same transaction; proceeds pay the liquidator. | No liquidation path — underwater debt can never be settled. |
+| **SaucerSwap V1** (DEX) | `liquidate` seizes HBAR collateral and swaps it to USDX through the SaucerSwap V1 router's payable ETH entry point in the same transaction; proceeds pay the liquidator. | No liquidation path — underwater debt can never be settled. |
 | **HTS** | USDX is a native HTS token created by the deploy script and used through its ERC-20 facade; the pool self-associates WHBAR/USDX (and the SaucerSwap LP token) via the `0x167` precompile. | No borrowable asset, no collateral wrapping. |
 | **HCS** | The deploy script creates an activity topic; the Next.js API mirrors market events to it; the Activity page reads it back through the mirror node. | No auditable off-chain activity trail. |
 | **Mirror node** | The Liquidation Watch page finds borrowers by scanning `Borrowed` events from the mirror node REST API. | The liquidation UI has no index of positions. |
@@ -141,8 +141,10 @@ full HTS lifecycle, association included.
 - **Liquidation** — anyone calls `liquidate(borrower, repayAmount, minUsdxOut, deadline, priceUpdate)`:
   1. a fresh Pyth price proves the position is underwater;
   2. the liquidator's USDX repays part (or all) of the debt;
-  3. collateral worth `repay × 1.05` is seized and swapped WHBAR→USDX on SaucerSwap V1
-     (slippage-protected via `minUsdxOut`, quoted from the router first);
+  3. native HBAR collateral worth `repay × 1.05` is seized and swapped through SaucerSwap
+     V1's payable ETH entry point (`swapExactETHForTokens`, path `[WHBAR, USDX]` — the
+     router wraps HBAR itself), slippage-protected via `minUsdxOut` and quoted from the
+     router first;
   4. swap proceeds go to the liquidator — their profit is the bonus plus any gap between
      the oracle price and the pool price.
 
@@ -152,8 +154,8 @@ full HTS lifecycle, association included.
 | --- | --- | --- |
 | Pyth oracle | `0.0.3042133` | `0xa2aa501b19aff244d90cc15a4cf739d2725b5729` |
 | HBAR/USD feed id | — | `0x3728e591097635310e6341af53db8b7ee42da9b3a8d918f9463ce9cca886dfbd` |
-| SaucerSwap V1 router | `0.0.19264` | `0x0000000000000000000000000000000000004b40` |
-| WHBAR | `0.0.15058` | `0x0000000000000000000000000000000000003ae2` |
+| SaucerSwap V1 router (legacy testnet, read-only) | `0.0.19264` | `0x0000000000000000000000000000000000004b40` |
+| WHBAR (HTS facade used as the V1 swap path entry) | `0.0.15058` | `0x0000000000000000000000000000000000003ae2` |
 
 The Pyth address/feed and SaucerSwap addresses are also fetched from official sources at
 build-review time — see `packages/hardhat/scripts/lib/config.ts`.
@@ -163,7 +165,7 @@ build-review time — see `packages/hardhat/scripts/lib/config.ts`.
 - **USDX is treated as $1.00.** The template intentionally uses one oracle feed; a
   production market would value the debt asset with a Pyth USDC/USD feed too.
 - **Simple interest** (APY ÷ seconds-per-year), not per-block compounding.
-- **Collateral earns no yield** (kept as raw WHBAR custody).
+- **Collateral earns no yield** (held as native HBAR in the pool).
 - **Liquidation LP tokens are locked** in the pool contract (testnet convenience —
   `bootstrap.ts` sends them to the pool).
 - **Residual bad debt is socialized** across suppliers if collateral is exhausted.
@@ -191,13 +193,38 @@ npm run build          # production build of the app
 | HashPack doesn't appear in the wallet list | Set `NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID` (Reown Cloud) in `packages/nextjs/.env.local` and restart. |
 | `npm run deploy` reverts at `associateTokens` | The pool was deployed to the wrong network or the precompile call ran out of gas — check `.env` chain and retry. |
 
-## Evidence (deployer: fill in after `npm run deploy`)
+## Evidence (Hedera testnet, deployer account 0.0.10653436)
 
-- Pool contract (Hashscan): _<link>_
-- USDX token (Hashscan): _<link>_
-- HCS activity topic (Hashscan): _<link>_
-- Example borrow transaction (Hashscan): _<link>_
-- Example liquidation transaction (Hashscan): _<link>_
+- **LendingPool contract**: [0.0.10658737](https://hashscan.io/testnet/contract/0.0.10658737)
+- **USDX HTS token** (created by `npm run deploy`): [0.0.10657747](https://hashscan.io/testnet/token/0.0.10657747)
+- **HCS activity topic**: [0.0.10658821](https://hashscan.io/testnet/topic/0.0.10658821) — [message #1 mirrored back through the mirror node](https://testnet.mirrornode.hedera.com/api/v1/topics/0.0.10658821/messages)
+- **Collateral deposit** (native HBAR → pool custody): [0xe4b40b39…](https://hashscan.io/testnet/transaction/0xe4b40b39f05ee40a4fa8ae1eed1c4a1470717e149f5d7d0defe7586a693f0660)
+- **Pool token association** (HTS precompile via HAPI): see transactions on the [pool account](https://hashscan.io/testnet/account/0.0.10658737)
+- **Live SaucerSwap testnet quote** through the legacy V1 router (read-only):
+  `getAmountsOut(1 WHBAR → SAUCE) = 54.96 SAUCE` via router `0.0.19264`
+
+### SaucerSwap testnet status (verified during the build window)
+
+SaucerSwap's **legacy testnet deployment can no longer create new pairs**: the
+testnet factory's pair contracts are no longer authorized to self-associate via the HTS
+precompile, and SaucerSwap's canonical docs no longer publish testnet contract tables.
+`npm run bootstrap` detects this, prints an explanation, and exits cleanly; on networks
+where the factory is functional (mainnet: V1 RouterV3 `0.0.3045981`) the same script
+creates and seeds the WHBAR/USDX pair automatically. Per the bounty brief, a read-only
+testnet integration (live router quotes) plus the unit-tested swap path is the fallback
+— a forked-mainnet liquidation test against SaucerSwap's real WHBAR/USDC liquidity is the
+planned strengthening of this evidence.
+
+### Hermes status
+
+During the build window the public Hermes gateway (`hermes.pyth.network`) began
+returning `401` on the signed-update endpoint (following Pyth's August 2026 upgrade) —
+this affects every consumer, not just this template. The frontend reads
+`NEXT_PUBLIC_HERMES_URL` (defaults to the public gateway) so a paid/self-hosted Hermes
+instance can be dropped in without code changes; `bootstrap` falls back to CoinGecko for
+the initial pool ratio if Hermes is unreachable. The on-chain Pyth integration (pull
+updates, `getPriceNoOlderThan` freshness, fee forwarding) is unaffected — it only needs
+*some* source of signed updates.
 
 ## License
 

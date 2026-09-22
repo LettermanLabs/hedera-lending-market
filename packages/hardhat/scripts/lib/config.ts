@@ -19,7 +19,8 @@ export const USDX_DECIMALS = 6;
 export const USDX_TOTAL_SUPPLY = 1_000_000n * 10n ** 6n;
 export const POOL_LIQUIDITY_USDX = 400_000n * 10n ** 6n;
 export const FAUCET_SEED_USDX = 100_000n * 10n ** 6n;
-export const AMM_SEED_HBAR = 100n * 10n ** 8n; // 100 HBAR of initial AMM liquidity
+/** 100 HBAR of initial AMM liquidity, in wei (1 HBAR = 1e18 wei on the EVM). */
+export const AMM_SEED_HBAR_WEI = 100n * 10n ** 18n;
 
 /** Convert a Hedera token/account id (0.0.N) to its long-zero EVM address. */
 export function idToEvmAddress(id: string): string {

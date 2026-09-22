@@ -1,10 +1,24 @@
 import * as dotenv from "dotenv";
-import { AccountId, Client, PrivateKey } from "@hiero-ledger/sdk";
+import { AccountId, Client, Hbar, PrivateKey } from "@hiero-ledger/sdk";
 import { JsonRpcProvider, Wallet } from "ethers";
 import { TESTNET } from "./config";
 
 // Scripts run from packages/hardhat (npm workspace); the repo-root .env is two levels up.
 dotenv.config({ path: "../../.env" });
+
+/** Parses an ECDSA hex key, DER-encoded hex key, or falls back to auto-detection. */
+export function parsePrivateKey(key: string): PrivateKey {
+  const hex = key.startsWith("0x") ? key.slice(2) : key;
+  if (/^[0-9a-fA-F]{64}$/.test(hex)) {
+    // 32-byte ECDSA hex key (what the Hedera Portal shows)
+    return PrivateKey.fromStringECDSA(hex);
+  }
+  if (/^[0-9a-fA-F]{80,}$/.test(hex)) {
+    // DER-encoded hex key
+    return PrivateKey.fromStringDer(hex);
+  }
+  return PrivateKey.fromString(key);
+}
 
 export function requireEnv(): {
   accountId: AccountId;
@@ -21,13 +35,17 @@ export function requireEnv(): {
   return {
     accountIdString,
     accountId: AccountId.fromString(accountIdString),
-    operatorKey: PrivateKey.fromString(privateKey),
+    operatorKey: parsePrivateKey(privateKey),
   };
 }
 
-export function hederaClient(): Client {
+export function hederaClient() {
   const { accountId, operatorKey } = requireEnv();
-  return Client.forTestnet().setOperator(accountId, operatorKey);
+  const client = Client.forTestnet()
+    .setOperator(accountId, operatorKey)
+    .setDefaultMaxTransactionFee(new Hbar(20))
+    .setDefaultMaxQueryPayment(new Hbar(1));
+  return client as Client;
 }
 
 export function ethersProvider(): JsonRpcProvider {
