@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Local checks only. Public scaffolding, browser/wallet execution and chain evidence
-# are separate acceptance checks; a skipped local check is never counted as passed.
+# Run local checks. Wallet, browser, and live network checks are separate.
 set -euo pipefail
 cd "$(dirname "$0")"
 fail=0
@@ -23,15 +22,15 @@ run_check() {
 }
 
 if [ "$app_mode" -eq 1 ]; then
-  printf 'App validation (source template manifest validation explicitly excluded)\n'
+  printf 'Checking app (no source manifest required)\n'
 else
-  printf 'Template source validation (manifest required)\n'
+  printf 'Checking template source (manifest required)\n'
   if [ -f template.json ]; then ok 'template.json present'; else bad 'template.json missing'; fi
 fi
 for file in README.md AGENTS.md LICENSE package-lock.json packages/hardhat/package.json packages/nextjs/package.json; do
   if [ -f "$file" ]; then ok "$file present"; else bad "$file missing"; fi
 done
-run_check 'declared root commands and selected validation scope' node -e '
+run_check 'package scripts and template settings' node -e '
 const p = require("./package.json");
 if (process.argv[1] !== "1") {
   const m = require("./template.json"), b = m["create-scaffold-hbar"];
@@ -63,9 +62,9 @@ else
   run_check 'production frontend build' npm run build
 fi
 
-printf '\nSeparate acceptance checks still required:\n'
+printf '\nCheck separately before release:\n'
 printf '  - public GitHub scaffold, fresh install, rendered browser routes and wallet flows\n'
-printf '  - testnet deployment and current Hashscan/mirror-node evidence\n'
+printf '  - testnet deployment and Hashscan/mirror-node transaction links\n'
 printf '  - configured Hermes API access and a working liquidation route\n'
 printf '  - npm run test:fork (network-dependent mainnet-fork harness and ecosystem checks)\n'
 printf '  - bounty eligibility review and dependency/license notices\n'
@@ -73,5 +72,5 @@ if [ "$fail" -ne 0 ]; then printf '\nLocal validation FAILED.\n'; exit 1; fi
 if [ "$app_mode" -eq 1 ]; then
   printf '\nApp validation passed; source manifest validation was not run.\n'
 else
-  printf '\nTemplate source validation passed; this is not proof of full bounty eligibility.\n'
+  printf '\nTemplate source checks passed.\n'
 fi

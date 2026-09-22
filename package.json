@@ -2,7 +2,7 @@
   "name": "HederaLendingTemplate",
   "version": "1.0.0",
   "private": true,
-  "description": "HederaLendingTemplate \u2014 a collateralized lending market template for Hedera (scaffold-hbar external template)",
+  "description": "HederaLendingTemplate: supply USDX and borrow against HBAR on Hedera testnet.",
   "workspaces": [
     "packages/hardhat",
     "packages/nextjs"

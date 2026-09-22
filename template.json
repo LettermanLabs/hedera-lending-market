@@ -1,6 +1,6 @@
 {
   "name": "hedera-lending-market",
-  "description": "Collateralized lending market on Hedera: supply and borrow an HTS stable asset against HBAR collateral, with Pyth-powered pricing, SaucerSwap liquidation swaps, and an HCS activity feed.",
+  "description": "Supply USDX and borrow against HBAR on Hedera testnet, with Pyth prices, SaucerSwap liquidations, and HCS activity.",
   "version": "1.0.0",
   "create-scaffold-hbar": {
     "capabilities": {

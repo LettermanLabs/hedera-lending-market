@@ -1,15 +1,15 @@
 /**
- * Two separate evidence layers, with no mainnet transactions:
+ * Read-only mainnet checks and a local liquidation simulation:
  *
  * 1. Read the deployed SaucerSwap mainnet factory, pair and router through a
  *    provider without a signer. Assert its exact quote from same-block reserves.
- * 2. Transfer real HTS asset balances on a LOCAL mainnet fork into an independently
+ * 2. Transfer real HTS asset balances on a local mainnet fork into an independently
  *    implemented MIT constant-product test harness, then exercise LendingPool's
  *    liquidation, collateral, cash and debt accounting against that harness.
  *
- * The local swap is a simulation, NOT execution of canonical SaucerSwap contracts.
- * Its native conversion float does not exercise the deployed WHBAR minting path;
- * the Pyth oracle is also mocked. These limits are intentional and explicit.
+ * No mainnet transactions are submitted. The local swap uses the test harness,
+ * not canonical SaucerSwap contracts. The WHBAR minting path is replaced by a
+ * prefunded conversion float, and Pyth prices are mocked.
  *
  * Unit convention on the fork: 1 wei = 1 tinybar, matching how Hedera's EVM
  * exposes msg.value (1 HBAR = 1e8 tinybar).
@@ -30,7 +30,7 @@ const MAINNET = {
   router: lz(3045981),
   whbar: lz(1456986), // WHBAR HTS token
   usdc: lz(456858), // USDC native HTS token
-  pair: lz(1462797), // real SaucerSwap WHBAR/USDC V1 pair — the reserve whale
+  pair: lz(1462797), // SaucerSwap WHBAR/USDC V1 pair used to fund the local fork
 };
 
 const HBAR_UNITS = 10n ** 8n;
@@ -48,7 +48,7 @@ async function impersonateWithGas(address: string) {
   await network.provider.request({ method: "hardhat_impersonateAccount", params: [address] });
   await network.provider.request({
     method: "hardhat_setBalance",
-    params: [address, "0x56BC75E2D63100000"], // Generous gas balance in the fork's native units
+    params: [address, "0x56BC75E2D63100000"], // Gas balance in the fork's native units
   });
   return ethers.getSigner(address);
 }
@@ -111,7 +111,7 @@ describe("Deployed SaucerSwap reads and local fork liquidation simulation", func
   it("settles an underwater position through the local MIT harness using forked HTS balances", async () => {
     const [, supplier, borrower, liquidator] = await ethers.getSigners();
 
-    // ── Copy real-token balances on the local fork only ─────────────────────
+    // Copy HTS balances within the local fork.
     const whale = await impersonateWithGas(MAINNET.pair);
     const usdc = new ethers.Contract(MAINNET.usdc, ERC20_ABI, whale);
     const whbarToken = new ethers.Contract(MAINNET.whbar, ERC20_ABI, whale);
@@ -134,7 +134,7 @@ describe("Deployed SaucerSwap reads and local fork liquidation simulation", func
     console.log(`   local harness seeded with forked balances: ${r1} WHBAR / ${r0} USDC`);
     await (await whbarToken.transfer(await nativeFloat.getAddress(), whbarReserve)).wait();
 
-    // ── Deploy the pool against forked HTS assets + the test harness ──────────
+    // Deploy the pool with forked HTS assets and the local swap harness.
     const pyth = (await ethers.deployContract("MockPyth", [10_000_000, -8])) as unknown as MockPyth; // $0.10
     const pool = (await ethers.deployContract("LendingPool", [
       MAINNET.whbar,
@@ -149,34 +149,34 @@ describe("Deployed SaucerSwap reads and local fork liquidation simulation", func
     try {
       await (await pool.associateTokens()).wait();
     } catch {
-      // 0x167 not emulated — transfers below will confirm whether it matters
+      // The fork may not emulate 0x167; subsequent transfers check token usability.
     }
 
-    // ── Fund actors from the real reserves ────────────────────────────────────
+    // Fund test accounts from the forked pair reserves.
     await (await usdc.transfer(supplier.address, 20_000n * ONE_USDC)).wait();
     await (await usdc.transfer(liquidator.address, 100n * ONE_USDC)).wait();
 
-    // ── Supply USDC ────────────────────────────────────────────────────────────
+    // Supply USDC.
     const usdcAsSupplier = usdc.connect(supplier) as unknown as Contract;
     await (await usdcAsSupplier.approve(poolAddress, 20_000n * ONE_USDC)).wait();
     await (await pool.connect(supplier).supply(10_000n * ONE_USDC)).wait();
     console.log("   supplied 10,000 USDC");
 
-    // ── Borrow against HBAR collateral at $0.10 ───────────────────────────────
+    // Borrow against HBAR collateral at $0.10.
     await (await pool.connect(borrower).depositCollateral({ value: 100n * HBAR_UNITS })).wait();
     await (await pool.connect(borrower).borrow(6n * ONE_USDC, NO_UPDATE)).wait();
     console.log("   borrowed 6 USDC against 100 HBAR collateral");
 
-    // ── HBAR drops to $0.07 → position is underwater ──────────────────────────
+    // At $0.07, the position falls below the liquidation threshold.
     await (await pyth.setPrice(7_000_000)).wait(); // $0.07
     const price = 7_000_000n * 10n ** 10n;
     expect(await pool.isLiquidatable(borrower.address, price)).to.equal(true);
 
-    // ── Liquidate: repay USDC, then simulate the seized-HBAR swap locally ─────
+    // Repay USDC and swap the seized HBAR through the local harness.
     const collateralBefore = await pool.collateralOf(borrower.address);
     const usdcAsLiquidator = usdc.connect(liquidator) as unknown as Contract;
-    // This disposable fork account approves the full close, including interest
-    // accrued between the quote, approval, and liquidation blocks.
+    // Allow the fork account to close the debt, including interest accrued
+    // between the quote, approval, and liquidation blocks.
     await (await usdcAsLiquidator.approve(poolAddress, ethers.MaxUint256)).wait();
     const [, quotedSeizure] = await pool.previewLiquidation(borrower.address, ethers.MaxUint256, price);
     const quote = await router.getAmountsOut(quotedSeizure, [MAINNET.whbar, MAINNET.usdc]);
@@ -211,11 +211,9 @@ describe("Deployed SaucerSwap reads and local fork liquidation simulation", func
     const balanceAfter = (await usdc.balanceOf(liquidator.address)) as bigint;
     const collateralAfter = await pool.collateralOf(borrower.address);
 
-    // The artificial $0.07 oracle and $0.20 inventory ratio intentionally make the
-    // simulated liquidation profitable. They are not a mainnet price observation.
-
-    // ── Assertions ─────────────────────────────────────────────────────────────
-    // Verify debt and seizure at the actual execution index, not an earlier quote.
+    // The mocked $0.07 price and seeded $0.20 ratio produce a profitable liquidation;
+    // neither is a mainnet price observation.
+    // Check debt and seizure at the execution index, which includes pending interest.
     const executionDebt = (sharesBefore * (await pool.borrowIndex()) + 10n ** 18n - 1n) / 10n ** 18n;
     expect(debt).to.equal(executionDebt);
     const expectedSeizure = (((debt * 10n ** 12n * 105n) / 100n) * HBAR_UNITS) / price;

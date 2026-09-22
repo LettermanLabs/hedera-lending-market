@@ -9,7 +9,7 @@ export type Reservation = Entry | { state: "reserved" } | { state: "limited" };
 const exists = (error: unknown) =>
   (error as NodeJS.ErrnoException).code === "EEXIST";
 
-/** Persistent single/shared-volume journal. Unknown outcomes are never automatically resubmitted. */
+/** Shared-volume journal that prevents resubmission when a transaction's outcome is unknown. */
 export class ActivityStore {
   private root: string;
   constructor(
@@ -53,7 +53,7 @@ export class ActivityStore {
         if (!exists(error)) throw error;
       }
     }
-    await rm(entry, { recursive: true }); // Our unsubmitted reservation only.
+    await rm(entry, { recursive: true }); // Release this unsubmitted reservation.
     return { state: "limited" };
   }
   async save(hash: string, entry: Entry) {

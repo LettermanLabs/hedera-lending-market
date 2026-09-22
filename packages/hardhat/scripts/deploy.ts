@@ -1,15 +1,11 @@
 /**
- * Deploys the Hedera Lending Market to Hedera testnet:
- *   1. Creates USDX — the borrowable asset — as a native HTS token (treasury = deployer)
- *   2. Deploys the LendingPool contract
- *   3. Associates the pool with WHBAR + USDX via the HTS precompile (0x167)
- *   4. Seeds pool liquidity and the testnet faucet
- *   5. Creates the HCS activity topic
- *   6. Records everything for the frontend (packages/nextjs/.env.local)
+ * Deploys USDX and LendingPool on Hedera testnet, associates WHBAR and USDX via
+ * HAPI, seeds the pool and faucet, and creates a restricted HCS activity topic.
+ * The deployer is the USDX treasury. Public addresses are written to
+ * packages/nextjs/.env.local.
  *
- * The script is resumable: progress is saved after the pool is deployed, so a
- * retry after a mid-script failure reuses the on-chain state instead of
- * redeploying.
+ * A deployment journal tracks each submission. Completed steps are reused;
+ * unresolved transactions require manual reconciliation before retrying.
  *
  * Run: npm run deploy
  */
@@ -53,7 +49,7 @@ async function associateIfNeeded(tokenId: string): Promise<void> {
     console.log(`  associated ${tokenId} with operator`);
   } catch (error) {
     if (!String(error).includes("TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT")) throw error;
-    // Only a confirmed already-associated status is safe to ignore
+    // All association errors other than this confirmed status must propagate.
     console.log(`  operator already associated with ${tokenId}`);
   } finally {
     client.close();
@@ -100,7 +96,7 @@ async function main() {
     };
     saveDeployment(record);
     if (existing?.lendingPool && existing.usdxTokenId && existing.lendingPoolId) {
-      // ── Resume from a previous (possibly interrupted) deployment ─────────────
+      // Resume the recorded pool and token.
       console.log("\nResuming from previous deployment:");
       console.log(`   USDX: ${existing.usdxTokenId}   Pool: ${existing.lendingPoolId}`);
       usdxTokenId = existing.usdxTokenId;
@@ -109,12 +105,12 @@ async function main() {
       poolContractId = existing.lendingPoolId;
     } else {
       if (existing?.usdxTokenId) {
-        // ── USDX already created in a previous run — reuse it ──────────────────
+        // Reuse USDX if the earlier run stopped before pool creation.
         console.log(`\nReusing USDX from previous run: ${existing.usdxTokenId}`);
         usdxTokenId = existing.usdxTokenId;
         usdxEvm = existing.usdxEvm;
       } else {
-        // 1 ── Create USDX, the HTS borrowable asset ──────────────────────────────
+        // Create the HTS borrowable asset.
         console.log("\n1. Creating USDX via the Hedera Token Service…");
         beginStep(record, "createUsdx");
         const createTx = await new TokenCreateTransaction()
@@ -140,11 +136,8 @@ async function main() {
         completeStep(record, "createUsdx");
       }
 
-      // 2 ── Deploy the lending pool via HAPI with an admin key ─────────────────
-      // The admin key lets the pool authorize its own HTS associations (a plain
-      // EVM CREATE leaves the contract keyless, and precompile self-association
-      // would fail with INVALID_SIGNATURE). The bytecode is stored in a file
-      // first — HAPI transactions are capped at 6KB.
+      // HAPI creation assigns the admin key needed to authorize HTS associations.
+      // Plain EVM CREATE leaves the contract keyless (INVALID_SIGNATURE).
       console.log("\n2. Deploying LendingPool (HAPI contract create with admin key)…");
       beginStep(record, "createPool");
 
@@ -154,8 +147,8 @@ async function main() {
         .addAddress(TESTNET.pyth)
         .addBytes32(Uint8Array.from(Buffer.from(TESTNET.hbarUsdPriceId.slice(2), "hex")))
         .addAddress(TESTNET.saucerSwapRouter);
-      // ContractCreateFlow stores the initcode in file storage (6KB tx limit) and
-      // deploys in one call.
+      // ContractCreateFlow uploads initcode to file storage to handle the 6KB
+      // HAPI transaction limit, then creates the contract.
       const contractTx = await new ContractCreateFlow()
         .setBytecode(artifact.bytecode)
         .setGas(4_000_000)
@@ -180,9 +173,7 @@ async function main() {
     if (![signer.address.toLowerCase(), idToEvmAddress(accountIdString).toLowerCase()].includes(admin.toLowerCase()))
       throw new Error("Configured signer is not the deployed pool owner");
 
-    // 3 ── Associate the pool contract with WHBAR + USDX ─────────────────────────
-    // Done via HAPI (signed by the pool's admin key = operator): a contract can
-    // only authorize its own HTS associations when its key signs the transaction.
+    // Authorize the pool's WHBAR and USDX associations with its admin key.
     console.log("\n3. Associating pool contract with WHBAR + USDX via HAPI…");
     for (const tokenId of [WHBAR_TOKEN_ID, usdxTokenId]) {
       try {
@@ -199,17 +190,16 @@ async function main() {
       }
     }
 
-    // 4 ── Seed liquidity + faucet ───────────────────────────────────────────────
+    // Seed pool liquidity and the faucet.
     console.log("\n4. Seeding pool liquidity and faucet…");
     await associateIfNeeded(usdxTokenId);
     await associateIfNeeded(WHBAR_TOKEN_ID);
 
     const usdx = new ethers.Contract(usdxEvm, ERC20_ABI, signer);
 
-    // Mint more USDX if a previous (resumed) run already spent the treasury —
-    // the deployer holds the token's supply key.
-    // A pending submission is resolved manually against the stored hash/ID before a
-    // retry. Even a process crash after consensus must not duplicate a seed.
+    // The deployer's supply key can mint a treasury deficit on resume. Pending
+    // submissions must first be reconciled against their stored transaction IDs
+    // or hashes, including when the process stopped after consensus.
     for (const name of ["seedLiquidity", "seedFaucet", "mintDeficit"]) {
       if (record.steps?.[name]?.status === "pending") beginStep(record, name);
     }
@@ -257,7 +247,7 @@ async function main() {
       }
     }
 
-    // 5 ── Create the HCS activity topic ─────────────────────────────────────────
+    // Restrict HCS submissions to the operator's key.
     let topicId = record.hcsTopicId;
     if (!topicId) {
       console.log("\n5. Creating HCS activity topic…");
@@ -278,7 +268,7 @@ async function main() {
     }
     console.log(`   topic: ${topicId}`);
 
-    // 6 ── Record for the frontend ───────────────────────────────────────────────
+    // Persist the topic and frontend addresses.
     saveDeployment(record);
 
     console.log("\n✅ Deployment complete");

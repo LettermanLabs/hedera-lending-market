@@ -7,7 +7,7 @@ import "@nomicfoundation/hardhat-network-helpers";
 import "@typechain/hardhat";
 import { HardhatUserConfig } from "hardhat/config";
 
-// Hedera mainnet fork (HTS-aware) for the SaucerSwap liquidation test — `npm run test:fork`.
+// Enable HTS-aware mainnet forking for the local liquidation simulation.
 if (process.env.HEDERA_FORKING === "true") {
   require("@hashgraph/system-contracts-forking/plugin");
 }

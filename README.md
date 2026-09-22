@@ -1,28 +1,20 @@
 # Hedera Lending Market
 
-**Created and maintained by LettermanLabs.** This is the
-[canonical repository](https://github.com/LettermanLabs/hedera-lending-market)
-for our Scaffold-HBAR Template Bounty project. Watch the
-[interactive walkthrough](https://lettermanlabs.com/Hedera/) and see
-[authorship and source provenance](PROVENANCE.md) for the dated development record.
+A lending market built by **LettermanLabs** for Hedera testnet. Supply USDX to earn
+interest, deposit HBAR as collateral, and borrow against it using Pyth prices.
+Liquidations use SaucerSwap V1, and an optional HCS feed records pool activity.
 
-Reuse and forks are welcome under the [MIT license](LICENSE); retain the applicable
-copyright and license notices. If you enter a derivative in a competition, please
-credit this upstream project and distinguish your own contributions. Eligibility
-is determined by the competition organizers. Third-party components retain their
-own licenses and attribution.
+[Interactive walkthrough](https://lettermanlabs.com/Hedera/) ·
+[Testnet transactions](#testnet-deployment-september-22-2026) ·
+[Project history](PROVENANCE.md)
 
-A scaffold-hbar lending template for Hedera testnet. Supply six-decimal HTS USDX,
-lock native HBAR, borrow against Pyth HBAR/USD, and liquidate through a SaucerSwap
-V1 route. The optional HCS feed records verified pool events with consensus timestamps.
-
-The app boots without credentials. Executing loans needs a deployed pool, an
-associated wallet, testnet funds and an authorized Hermes price service. Live
-liquidation additionally needs a seeded swap route; see the testnet limitation below.
+The app runs locally without credentials. To borrow, you need a deployed pool,
+an associated wallet, testnet funds, and authorized Hermes access. Live liquidations
+also need a funded swap route; the current testnet route is unavailable.
 
 ## Run locally
 
-Use **Node.js 22.14+ or 24 LTS** and `npm` 10+. From a public version of this repository:
+Use **Node.js 22.14+ or 24 LTS** and `npm` 10+:
 
 ```bash
 npx create-scaffold-hbar@latest my-lending-market --template LettermanLabs/hedera-lending-market --network testnet --skip-hedera-skills
@@ -30,10 +22,9 @@ cd my-lending-market
 npm run dev
 ```
 
-For an authenticated clone, run `npm ci` first. Open [localhost:3000](http://localhost:3000).
-The unconfigured market and Activity pages explain what is needed; reading the UI
-does not require an operator private key. A private GitHub repository cannot be used
-by an unauthenticated public-template evaluator.
+If you cloned the repository directly, run `npm ci` followed by `npm run dev`.
+Open [localhost:3000](http://localhost:3000). The Market and Activity pages show
+setup instructions until you configure a deployment.
 
 ## Configure and deploy to testnet
 
@@ -70,8 +61,8 @@ Hermes price. LP tokens remain in the pool contract. Scripts are testnet-only.
 | `HEDERA_RPC_URL` | Optional deployment testnet JSON-RPC override. |
 | `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_MIRROR_NODE` | Optional public testnet endpoints used by the app. |
 
-`/api/price-update` keeps Hermes credentials on the server. A missing/invalid key
-produces a visible setup error; the app does not fabricate signed updates or prices.
+`/api/price-update` keeps Hermes credentials on the server and reports a setup error
+if the key is missing or invalid.
 
 `/api/activity` accepts a transaction hash, verifies a recent successful direct pool
 transaction, and derives messages from the receipt's pool events. It checks that the
@@ -108,8 +99,8 @@ association. Alternatively use the wallet's own testnet credentials with
 5. Inspect Liquidation Watch and the optional Activity feed. A live liquidation needs
    a working WHBAR/USDX pool with sufficient reserves.
 
-Transactions await successful receipts. Rejected/reverted transactions must not be
-reported as successful activity. HBAR wallet transaction `value` has **18 decimals**;
+The app confirms each transaction receipt before reporting success.
+HBAR wallet transaction `value` has **18 decimals**;
 contract calldata and `msg.value` use **8-decimal tinybars**. USDX has **6 decimals**,
 and internal USD price/index values have **18**.
 
@@ -143,23 +134,23 @@ simplifications, not production lending controls.
 
 ```
 packages/hardhat/contracts/LendingPool.sol   Accounting, collateral, HTS, Pyth, swaps
-packages/hardhat/contracts/fork/             Original MIT constant-product test harness
-packages/hardhat/test/                      Local accounting/integration regressions
-packages/hardhat/test-fork/                 Network-dependent ecosystem/fork checks
+packages/hardhat/contracts/fork/            Constant-product test harness
+packages/hardhat/test/                      Contract tests
+packages/hardhat/test-fork/                 Mainnet reads and local fork tests
 packages/hardhat/scripts/                   Deployment, associations, bootstrap, ABIs
-packages/nextjs/app/api/                    Server price proxy and verified HCS writer
+packages/nextjs/app/api/                    Price proxy and HCS writer
 packages/nextjs/components/                 Market, positions, liquidations and activity
 packages/nextjs/lib/                        Units, wallet receipts, mirror/oracle helpers
 ```
 
-## Development and validation
+## Development
 
 ```bash
 npm ci
 npm run audit:production
 npm run compile
 npm run export-abis     # after contract ABI changes
-npm run test            # contracts + app/server + deployment helper regressions
+npm run test            # contracts, app/server, and deployment helpers
 npm run lint            # both workspaces, including TypeScript
 npm run build
 npm run check           # app checks, including generated projects; no secrets required
@@ -167,24 +158,22 @@ npm run check:template  # source repository only: additionally requires template
 npm run test:fork       # separate mainnet RPC/mirror-node dependent test
 ```
 
-The scaffold CLI consumes and removes `template.json` after validating it. Therefore
-`check` explicitly validates the app; `check:template` (or `./self-check.sh`) is the
-strict source-repository gate and fails when the manifest is missing. Generated app
-CI runs app checks, while this template repository's CI requires source validation.
+The scaffold CLI removes `template.json` after setup. Use `npm run check` in a
+generated app and `npm run check:template` in this repository. Both run the tests,
+lint, and build; the template check also validates the manifest.
 
-GitHub Actions runs local validation on push/PR and rejects high/critical production
-dependency advisories. Its manually dispatched workflow also runs the fork test. The self-check reports missing dependencies as a
-failure and identifies checks it cannot prove: public scaffolding, rendered browser
-behavior, real wallet flows, current testnet deployment evidence and bounty eligibility.
+GitHub Actions runs these checks on pushes and pull requests, plus a production
+dependency audit. Run the workflow manually to include the fork test. Browser,
+wallet, and live testnet checks are separate. [AGENTS.md](AGENTS.md) covers the
+codebase's units, accounting rules, and development workflow.
 
 Dependency audit status on September 22, 2026: the production-only audit reports no
 advisories. The full tree still reports 17 low-severity package entries stemming
 from the unpatched development dependency `elliptic`
 ([GHSA-848j-6mx2-7j84 / CVE-2025-14505](https://github.com/advisories/GHSA-848j-6mx2-7j84))
-in the Hardhat 2/fork toolchain. The production SDK resolves ethers 6.17. Audit scope
-matters: the production result does not mean the full development tree has no findings.
+in the Hardhat 2/fork toolchain. The production SDK resolves ethers 6.17.
 
-## Integration limits and evidence
+## Integration status
 
 **SaucerSwap testnet:** the legacy V1 factory previously reverted while creating new
 pairs because of HTS association authorization. The script reports pair failure
@@ -196,7 +185,7 @@ Check [SaucerSwap deployments](https://docs.saucerswap.finance/developers/contra
 and [Pyth addresses](https://docs.pyth.network/price-feeds/core/contract-addresses/evm)
 before changing them.
 
-**What the ecosystem/fork test checks:** the suite separates two kinds of evidence:
+**Fork tests** cover two cases:
 
 - Read-only calls to deployed SaucerSwap mainnet factory `0.0.1062784` and router
   `0.0.3045981` discover the WHBAR/USDC pair and compare the router quote with an
@@ -214,7 +203,7 @@ does not execute through the deployed SaucerSwap router, obtain a signed live Py
 update or create HTS pairs on the real network. Neither test sends a mainnet
 transaction. See the test source and [source-history notices](THIRD_PARTY_NOTICES.md).
 
-### Corrected deployment evidence (September 22, 2026)
+### Testnet deployment (September 22, 2026)
 
 - [LendingPool 0.0.10660545](https://hashscan.io/testnet/contract/0.0.10660545)
 - [USDX 0.0.10660541](https://hashscan.io/testnet/token/0.0.10660541)
@@ -226,14 +215,14 @@ transaction. See the test source and [source-history notices](THIRD_PARTY_NOTICE
   and [withdraw 10 USDX](https://hashscan.io/testnet/transaction/0x6a600be5c7d70403eac9151eb3b549e6931d693d9b5ed53120d40e50992e36b1)
 - [Claim 250 USDX from the faucet](https://hashscan.io/testnet/transaction/0xa39a0b1272b324029c4058897d019d113b39e680f67881839d8b9f4098351ffd)
 
-These transactions were verified with RPC receipts and before/after balance assertions.
-The HCS API published the confirmed deposit as message 1, returned the same sequence
-on a duplicate request without resubmitting, and rejected caller-supplied event fields.
-The configured production build rendered the recorded message through the mirror node.
-Borrowing with a live signed Pyth update remains unverified without authorized Hermes
-access, and the testnet SaucerSwap route remains unavailable. The fork test covers liquidation only within the scope described above.
+Receipt and balance checks passed for these transactions. The HCS API recorded the
+deposit as message 1, returned that sequence for duplicate requests, and rejected
+caller-supplied event fields. The Activity page displayed the message from the mirror
+node. Live signed-price borrowing has not been tested because Hermes access is still
+needed. The SaucerSwap testnet route is unavailable; liquidation is tested locally
+as described above.
 
-Historical evidence below belongs to the earlier contract revision:
+Earlier deployment, using the previous contract revision:
 
 - [Pool 0.0.10658737](https://hashscan.io/testnet/contract/0.0.10658737)
 - [USDX 0.0.10657747](https://hashscan.io/testnet/token/0.0.10657747)
@@ -253,7 +242,12 @@ Historical evidence below belongs to the earlier contract revision:
 
 ## License
 
-Current LettermanLabs application, contracts and test harness are [MIT](LICENSE).
+Built for the [Scaffold-HBAR Template Bounty](https://hedera.com/blog/scaffold-hbar-template-bounty/).
+The LettermanLabs application, contracts, and test harness are [MIT](LICENSE).
+Keep the copyright and license notices when reusing the code. If you build on this
+project, please credit LettermanLabs and identify your changes. See
+[project history](PROVENANCE.md) and [citation metadata](CITATION.cff).
+
 Earlier revisions contained GPL-derived AMM fixtures; those were replaced, and their
 original licensing is preserved in repository history. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for historical attribution and notices.
