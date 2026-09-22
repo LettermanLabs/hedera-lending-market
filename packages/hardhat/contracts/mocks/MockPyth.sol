@@ -4,11 +4,12 @@ pragma solidity ^0.8.24;
 import {PythStructs} from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 
 /// @notice Minimal mock of the Pyth pull oracle with the exact selector surface the
-///         pool uses. Price updates are free and always "fresh".
+///         pool uses, including configurable fees and stale-price rejection.
 contract MockPyth {
     int64 public price;
     int32 public expo;
     uint64 public publishTime;
+    uint256 public updateFee;
 
     constructor(int64 _price, int32 _expo) {
         price = _price;
@@ -21,11 +22,16 @@ contract MockPyth {
         publishTime = uint64(block.timestamp);
     }
 
-    function getUpdateFee(bytes[] calldata) external pure returns (uint256) {
-        return 0;
+    function setUpdateFee(uint256 fee) external {
+        updateFee = fee;
+    }
+
+    function getUpdateFee(bytes[] calldata) external view returns (uint256) {
+        return updateFee;
     }
 
     function updatePriceFeeds(bytes[] calldata) external payable {
+        require(msg.value == updateFee, "incorrect fee");
         publishTime = uint64(block.timestamp);
     }
 

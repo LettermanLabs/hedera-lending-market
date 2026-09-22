@@ -2,14 +2,14 @@
   "name": "HederaLendingTemplate",
   "version": "1.0.0",
   "private": true,
-  "description": "HederaLendingTemplate — a collateralized lending market template for Hedera (scaffold-hbar external template)",
+  "description": "HederaLendingTemplate \u2014 a collateralized lending market template for Hedera (scaffold-hbar external template)",
   "workspaces": [
     "packages/hardhat",
     "packages/nextjs"
   ],
   "scripts": {
     "compile": "npm run compile -w @sh/hardhat",
-    "test": "npm run test -w @sh/hardhat",
+    "test": "npm run test:contracts && npm run test:app && npm run test:tooling",
     "chain": "npm run chain -w @sh/hardhat",
     "deploy": "npm run deploy -w @sh/hardhat",
     "bootstrap": "npm run bootstrap -w @sh/hardhat",
@@ -17,10 +17,41 @@
     "dev": "npm run dev -w @sh/nextjs",
     "build": "npm run build -w @sh/nextjs",
     "start": "npm run start -w @sh/nextjs",
-    "lint": "npm run lint -w @sh/hardhat && npm run lint -w @sh/nextjs"
+    "lint": "npm run lint -w @sh/hardhat && npm run lint -w @sh/nextjs",
+    "test:contracts": "npm run test -w @sh/hardhat",
+    "test:app": "node --import tsx --test packages/nextjs/lib/*.test.ts packages/nextjs/lib/server/*.test.ts",
+    "test:tooling": "node --import tsx --test packages/hardhat/scripts/lib/*.test.ts",
+    "test:fork": "npm run test:fork -w @sh/hardhat",
+    "export-abis": "npm run export-abis -w @sh/hardhat",
+    "check": "./self-check.sh --app",
+    "format": "prettier --write --ignore-path .gitignore .",
+    "check:template": "./self-check.sh",
+    "audit:production": "bash scripts/audit-production.sh"
   },
   "packageManager": "npm@10.0.0",
   "engines": {
-    "node": ">=20.18.3"
+    "node": ">=22.14.0 <25"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  },
+  "overrides": {
+    "@wagmi/connectors": {
+      "@walletconnect/ethereum-provider": "2.25.0"
+    },
+    "uuid@<11.1.1": "11.1.1",
+    "postcss@<8.5.23": "8.5.28",
+    "ethers@>=6.0.0 <6.17.0": "6.17.0",
+    "adm-zip@<0.6.1": "0.6.1",
+    "serialize-javascript@<7.0.5": "7.0.5",
+    "tmp@<0.2.6": "0.2.7",
+    "undici@<6.28.0": "6.28.1",
+    "bn.js@<4.12.3": "4.12.5",
+    "diff@>=6.0.0 <8.0.3": "8.0.3",
+    "cookie@<0.7.0": "0.7.2",
+    "@hiero-ledger/proto@2.31.0": {
+      "ansi-styles": "7.0.0",
+      "protobufjs": "8.6.6"
+    }
   }
 }

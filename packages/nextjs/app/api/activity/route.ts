@@ -1,53 +1,89 @@
-import { NextResponse } from "next/server";
-import { AccountId, Client, PrivateKey, TopicMessageSubmitTransaction } from "@hiero-ledger/sdk";
+import {
+  AccountId,
+  Client,
+  Hbar,
+  PrivateKey,
+  TopicMessageSubmitTransaction,
+  TransactionId,
+} from "@hiero-ledger/sdk";
+import { resolve } from "node:path";
+import { ActivityStore } from "../../../lib/server/activity-store";
+import { createActivityHandler } from "../../../lib/server/activity-handler";
 
-/**
- * Mirrors market activity to the HCS topic. Server-side only: the operator key
- * never leaves the environment. Without credentials the app still works — this
- * endpoint just reports 503 and the UI treats HCS mirroring as best-effort.
- */
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+let handler: ReturnType<typeof createActivityHandler> | undefined;
+
 export async function POST(request: Request) {
   const accountId = process.env.HEDERA_ACCOUNT_ID;
   const privateKey = process.env.HEDERA_PRIVATE_KEY;
   const topicId = process.env.NEXT_PUBLIC_HCS_TOPIC_ID;
-
-  if (!accountId || !privateKey || !topicId) {
-    return NextResponse.json(
-      { ok: false, error: "HCS mirroring not configured (missing HEDERA_ACCOUNT_ID/HEDERA_PRIVATE_KEY/topic)." },
+  const pool = process.env.NEXT_PUBLIC_LENDING_POOL;
+  if (!accountId || !privateKey || !topicId || !pool)
+    return Response.json(
+      {
+        ok: false,
+        error:
+          "Optional HCS mirroring is not configured. Set server operator credentials, pool and topic in packages/nextjs/.env.local.",
+      },
       { status: 503 },
     );
-  }
-
-  let body: { type?: string; account?: string; amount?: string; txHash?: string };
   try {
-    body = await request.json();
+    if (!handler) {
+      if (!/^0x[0-9a-fA-F]{40}$/.test(pool) || !/^0\.0\.\d+$/.test(topicId))
+        throw new Error("Invalid configuration");
+      const rawKey = privateKey.replace(/^0x/, "");
+      const key = /^[0-9a-fA-F]{64}$/.test(rawKey)
+        ? PrivateKey.fromStringECDSA(rawKey)
+        : PrivateKey.fromStringDer(rawKey);
+      const operator = AccountId.fromString(accountId);
+      const store = new ActivityStore(
+        resolve(process.env.ACTIVITY_STORE_DIR ?? ".data/activity"),
+        `296:${pool.toLowerCase()}:${topicId}`,
+      );
+      handler = createActivityHandler({
+        pool,
+        topicId,
+        mirrorNode: "https://testnet.mirrornode.hedera.com",
+        submitKey: key.publicKey.toStringRaw(),
+        store,
+        prepare(message) {
+          const id = TransactionId.generate(operator);
+          return {
+            id: id.toString(),
+            async send() {
+              const client = Client.forTestnet()
+                .setOperator(operator, key)
+                .setDefaultMaxTransactionFee(new Hbar(0.5));
+              try {
+                const tx = await new TopicMessageSubmitTransaction()
+                  .setTopicId(topicId)
+                  .setTransactionId(id)
+                  .setMaxChunks(1)
+                  .setMaxTransactionFee(new Hbar(0.5))
+                  .setMessage(JSON.stringify(message))
+                  .execute(client);
+                const receipt = await tx.getReceipt(client);
+                if (!receipt.topicSequenceNumber)
+                  throw new Error("Missing HCS sequence");
+                return receipt.topicSequenceNumber.toString();
+              } finally {
+                client.close();
+              }
+            },
+          };
+        },
+      });
+    }
+    return handler(request);
   } catch {
-    return NextResponse.json({ ok: false, error: "invalid JSON" }, { status: 400 });
-  }
-  if (!body.type || typeof body.type !== "string" || body.type.length > 40) {
-    return NextResponse.json({ ok: false, error: "type is required" }, { status: 400 });
-  }
-
-  const message = JSON.stringify({
-    type: body.type,
-    account: body.account,
-    amount: body.amount,
-    txHash: body.txHash,
-    at: new Date().toISOString(),
-  });
-
-  try {
-    const client = Client.forTestnet().setOperator(
-      AccountId.fromString(accountId),
-      PrivateKey.fromString(privateKey),
-    );
-    const tx = await new TopicMessageSubmitTransaction().setTopicId(topicId).setMessage(message).execute(client);
-    const receipt = await tx.getReceipt(client);
-    return NextResponse.json({ ok: true, sequence: receipt.topicSequenceNumber?.toString() ?? null });
-  } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : String(e) },
-      { status: 500 },
+    return Response.json(
+      {
+        ok: false,
+        error:
+          "HCS server configuration is invalid. Check the operator key and activity storage.",
+      },
+      { status: 503 },
     );
   }
 }

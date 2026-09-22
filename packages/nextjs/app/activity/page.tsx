@@ -1,7 +1,7 @@
 "use client";
 
 import { ActivityFeed } from "../../components/ActivityFeed";
-import { appConfig, isConfigured } from "../../lib/config";
+import { appConfig } from "../../lib/config";
 
 export default function ActivityPage() {
   return (
@@ -14,7 +14,7 @@ export default function ActivityPage() {
           through the mirror node — no wallet required.
         </p>
       </div>
-      {isConfigured ? <ActivityFeed /> : null}
+      <ActivityFeed />
     </div>
   );
 }

@@ -1,0 +1,36 @@
+name: Validate template
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  local:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:production
+      - name: Validate template source or generated app
+        run: |
+          if [ -f template.json ] || [ "$GITHUB_REPOSITORY" = "LettermanLabs/hedera-lending-market" ]; then
+            npm run check:template
+          else
+            npm run check
+          fi
+  fork:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:fork

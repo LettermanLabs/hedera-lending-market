@@ -67,6 +67,37 @@ export const LendingPoolAbi = [
       {
         "indexed": true,
         "internalType": "address",
+        "name": "borrower",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "debt",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "reservesUsed",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "supplierLoss",
+        "type": "uint256"
+      }
+    ],
+    "name": "BadDebtResolved",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "account",
         "type": "address"
       },
@@ -251,6 +282,19 @@ export const LendingPoolAbi = [
     "type": "event"
   },
   {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "SurplusRecognized",
+    "type": "event"
+  },
+  {
     "inputs": [],
     "name": "BORROW_RATE_INTERCEPT",
     "outputs": [
@@ -405,6 +449,19 @@ export const LendingPoolAbi = [
     "name": "associateTokens",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "availableLiquidity",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -655,6 +712,19 @@ export const LendingPoolAbi = [
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "latestPricePublishTime",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -685,6 +755,40 @@ export const LendingPoolAbi = [
     "name": "liquidate",
     "outputs": [],
     "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "borrower",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "repayAmount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "price18",
+        "type": "uint256"
+      }
+    ],
+    "name": "previewLiquidation",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "pay",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "seizeHbar",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -773,6 +877,19 @@ export const LendingPoolAbi = [
   },
   {
     "inputs": [],
+    "name": "supplyEpoch",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "supplyIndex",
     "outputs": [
       {
@@ -788,7 +905,7 @@ export const LendingPoolAbi = [
     "inputs": [
       {
         "internalType": "address",
-        "name": "",
+        "name": "account",
         "type": "address"
       }
     ],

@@ -13,7 +13,7 @@ import "./interfaces/IHederaTokenService.sol";
 
 /// @title LendingPool — a collateralized lending market on Hedera.
 /// @notice Suppliers deposit an HTS stable asset (USDX) to earn interest; borrowers
-///         lock HBAR collateral (wrapped into SaucerSwap WHBAR) to borrow USDX.
+///         lock native HBAR collateral to borrow USDX.
 ///         Borrowing power, withdrawals and liquidations are priced by the Pyth
 ///         pull oracle; underwater positions are settled by seizing collateral and
 ///         swapping it back to USDX on SaucerSwap V1.
@@ -55,12 +55,19 @@ contract LendingPool is ReentrancyGuard {
     uint256 public totalSupplyScaled;
     uint256 public totalBorrowScaled;
     uint256 public totalReserves;
+    uint256 private reserveRemainder;
 
-    mapping(address => uint256) public supplyScaled; // USDX suppliers
+    // A complete loss retires old shares without iterating over suppliers. The
+    // public getter reports only the current epoch, so a recapitalization cannot
+    // accidentally restore claims that were already written off.
+    uint256 public supplyEpoch;
+    mapping(address => uint256) private supplierEpoch;
+    mapping(address => uint256) private supplierShares;
     mapping(address => uint256) public borrowScaled; // USDX borrowers
-    mapping(address => uint256) public collateralOf; // WHBAR collateral
+    mapping(address => uint256) public collateralOf; // Native HBAR, in tinybar (8 decimals)
 
     uint256 public latestPrice18; // last Pyth HBAR/USD price, 18 decimals
+    uint64 public latestPricePublishTime;
 
     // ── Testnet faucet ────────────────────────────────────────────────────────
     uint256 public constant FAUCET_AMOUNT = 250e6; // 250 USDX (6 decimals)
@@ -84,6 +91,8 @@ contract LendingPool is ReentrancyGuard {
     );
     event FaucetClaimed(address indexed account, uint256 amount);
     event PriceUpdated(uint256 price18, uint64 publishTime);
+    event BadDebtResolved(address indexed borrower, uint256 debt, uint256 reservesUsed, uint256 supplierLoss);
+    event SurplusRecognized(uint256 amount);
 
     error InsufficientCollateral();
     error HealthyPosition();
@@ -99,7 +108,7 @@ contract LendingPool is ReentrancyGuard {
         lastAccrual = block.timestamp;
     }
 
-    /// @notice The pool receives native HBAR when unwrapping WHBAR on withdrawal.
+    /// @notice Accept native HBAR, including oracle fee refunds.
     receive() external payable {}
 
     // ── Hedera Token Service ──────────────────────────────────────────────────
@@ -124,77 +133,132 @@ contract LendingPool is ReentrancyGuard {
 
     // ── Interest accrual ──────────────────────────────────────────────────────
 
-    function accrue() public {
-        uint256 dt = block.timestamp - lastAccrual;
-        if (dt == 0) return;
-        lastAccrual = block.timestamp;
-
-        uint256 supplyU = totalSupply();
-        uint256 borrowU = totalBorrow();
-        if (borrowU == 0) return;
-
-        uint256 util = supplyU == 0 ? 0 : Math.mulDiv(borrowU, 1e18, supplyU);
-        uint256 borrowApy = BORROW_RATE_INTERCEPT + Math.mulDiv(util, BORROW_RATE_SLOPE, 1e18);
-        uint256 interest = Math.mulDiv(borrowU, borrowApy * dt, 1e18 * SECONDS_PER_YEAR);
-
-        uint256 reserveDelta = Math.mulDiv(interest, RESERVE_FACTOR, 1e18);
-        totalReserves += reserveDelta;
-
-        if (supplyU == 0) {
-            // No suppliers: interest accrues entirely to reserves.
-            uint256 borrowOnly = borrowU + interest;
-            borrowIndex = Math.mulDiv(borrowIndex, borrowOnly, borrowU);
-            totalBorrowScaled = Math.mulDiv(borrowOnly, 1e18, borrowIndex);
-            return;
-        }
-
-        uint256 supplierDelta = interest - reserveDelta;
-        uint256 newSupplyU = supplyU + supplierDelta;
-        uint256 newBorrowU = borrowU + interest;
-
-        supplyIndex = Math.mulDiv(supplyIndex, newSupplyU, supplyU);
-        borrowIndex = Math.mulDiv(borrowIndex, newBorrowU, borrowU);
-        totalSupplyScaled = Math.mulDiv(newSupplyU, 1e18, supplyIndex);
-        totalBorrowScaled = Math.mulDiv(newBorrowU, 1e18, borrowIndex);
+    function accrue() external nonReentrant {
+        _accrue();
     }
 
-    function totalSupply() public view returns (uint256) {
+    function _accrue() internal {
+        uint256 reserveDelta;
+        (supplyIndex, borrowIndex, reserveDelta, reserveRemainder) = _previewAccrual();
+        totalReserves += reserveDelta;
+        lastAccrual = block.timestamp;
+        // Direct token donations have no supplier shares. Recognize them as
+        // protocol reserves instead of lending capital with no loss-bearing owner.
+        uint256 assets = usdx.balanceOf(address(this)) + _storedBorrow();
+        uint256 liabilities = _storedSupply() + totalReserves + faucetBudget;
+        if (assets > liabilities) {
+            uint256 surplus = assets - liabilities;
+            totalReserves += surplus;
+            emit SurplusRecognized(surplus);
+        }
+    }
+
+    function _storedSupply() internal view returns (uint256) {
         return Math.mulDiv(totalSupplyScaled, supplyIndex, 1e18);
     }
 
+    function _storedBorrow() internal view returns (uint256) {
+        return Math.mulDiv(totalBorrowScaled, borrowIndex, 1e18, Math.Rounding.Ceil);
+    }
+
+    /// @dev Shares never change during accrual. Accruing the index directly also
+    ///      preserves sub-token interest when operations occur only seconds apart.
+    function _previewAccrual()
+        internal
+        view
+        returns (uint256 nextSupply, uint256 nextBorrow, uint256 reserves, uint256 remainder)
+    {
+        nextSupply = supplyIndex;
+        nextBorrow = borrowIndex;
+        remainder = reserveRemainder;
+        uint256 dt = block.timestamp - lastAccrual;
+        uint256 borrowU = _storedBorrow();
+        if (dt == 0 || borrowU == 0) return (nextSupply, nextBorrow, 0, remainder);
+
+        uint256 supplyU = _storedSupply();
+        uint256 util = supplyU == 0 ? 1e18 : Math.min(Math.mulDiv(borrowU, 1e18, supplyU), 1e18);
+        uint256 borrowApy = BORROW_RATE_INTERCEPT + Math.mulDiv(util, BORROW_RATE_SLOPE, 1e18);
+        nextBorrow += Math.mulDiv(borrowIndex, borrowApy * dt, 1e18 * SECONDS_PER_YEAR);
+        uint256 interest = Math.mulDiv(totalBorrowScaled, nextBorrow, 1e18, Math.Rounding.Ceil) - borrowU;
+        if (totalSupplyScaled == 0) return (nextSupply, nextBorrow, interest, remainder);
+
+        // Carry the fractional reserve allocation across calls. Otherwise a caller
+        // could change the reserve split by repeatedly accruing tiny amounts.
+        uint256 reserveCut = Math.mulDiv(interest, RESERVE_FACTOR, 1e18);
+        remainder += mulmod(interest, RESERVE_FACTOR, 1e18);
+        reserveCut += remainder / 1e18;
+        remainder %= 1e18;
+        nextSupply += Math.mulDiv(interest - reserveCut, 1e18, totalSupplyScaled);
+        uint256 supplierGain = Math.mulDiv(totalSupplyScaled, nextSupply, 1e18) - supplyU;
+        reserves = interest - supplierGain;
+    }
+
+    function totalSupply() public view returns (uint256) {
+        (uint256 index, , , ) = _previewAccrual();
+        return Math.mulDiv(totalSupplyScaled, index, 1e18);
+    }
+
     function totalBorrow() public view returns (uint256) {
-        return Math.mulDiv(totalBorrowScaled, borrowIndex, 1e18);
+        (, uint256 index, , ) = _previewAccrual();
+        return Math.mulDiv(totalBorrowScaled, index, 1e18, Math.Rounding.Ceil);
+    }
+
+    function supplyScaled(address account) public view returns (uint256) {
+        return supplierEpoch[account] == supplyEpoch ? supplierShares[account] : 0;
     }
 
     function supplyBalanceOf(address account) public view returns (uint256) {
-        return Math.mulDiv(supplyScaled[account], supplyIndex, 1e18);
+        (uint256 index, , , ) = _previewAccrual();
+        return Math.mulDiv(supplyScaled(account), index, 1e18);
     }
 
     function borrowBalanceOf(address account) public view returns (uint256) {
-        return Math.mulDiv(borrowScaled[account], borrowIndex, 1e18);
+        (, uint256 index, , ) = _previewAccrual();
+        return Math.mulDiv(borrowScaled[account], index, 1e18, Math.Rounding.Ceil);
+    }
+
+    /// @notice Cash available to suppliers and borrowers, excluding earmarked funds.
+    function availableLiquidity() public view returns (uint256) {
+        (uint256 nextSupply, uint256 nextBorrow, uint256 pendingReserves, ) = _previewAccrual();
+        uint256 earmarked = faucetBudget + totalReserves + pendingReserves;
+        uint256 cash = usdx.balanceOf(address(this));
+        uint256 assets = cash + Math.mulDiv(totalBorrowScaled, nextBorrow, 1e18, Math.Rounding.Ceil);
+        uint256 liabilities = Math.mulDiv(totalSupplyScaled, nextSupply, 1e18) + earmarked;
+        if (assets > liabilities) earmarked += assets - liabilities;
+        return cash > earmarked ? cash - earmarked : 0;
     }
 
     // ── Pyth pull oracle ──────────────────────────────────────────────────────
 
     /// @notice Submit a signed Pyth price update (empty array to skip) and cache the
     ///         fresh HBAR/USD price. Excess msg.value is refunded.
-    function updatePrice(bytes[] calldata priceUpdateData) public payable returns (uint256 price18) {
+    function updatePrice(bytes[] calldata priceUpdateData) external payable nonReentrant returns (uint256 price18) {
+        return _updatePrice(priceUpdateData);
+    }
+
+    function _updatePrice(bytes[] calldata priceUpdateData) internal returns (uint256 price18) {
+        uint256 fee;
         if (priceUpdateData.length > 0) {
-            uint256 fee = pyth.getUpdateFee(priceUpdateData);
+            fee = pyth.getUpdateFee(priceUpdateData);
             require(msg.value >= fee, "insufficient Pyth fee");
             pyth.updatePriceFeeds{value: fee}(priceUpdateData);
-            uint256 refund = msg.value - fee;
-            if (refund > 0) {
-                (bool ok, ) = msg.sender.call{value: refund}("");
-                require(ok, "fee refund failed");
-            }
         }
         PythStructs.Price memory p = pyth.getPriceNoOlderThan(hbarUsdPriceId, 120 seconds);
         require(p.price > 0, "invalid price");
+        require(p.expo >= -18 && p.expo <= 18, "unsupported exponent");
         uint256 scale = 10 ** uint256(18 + int256(p.expo));
         price18 = uint256(uint64(p.price)) * scale;
         latestPrice18 = price18;
-        emit PriceUpdated(price18, uint64(p.publishTime));
+        latestPricePublishTime = uint64(p.publishTime);
+        emit PriceUpdated(price18, latestPricePublishTime);
+        _refund(msg.value - fee);
+    }
+
+    function _refund(uint256 refund) internal {
+        if (refund > 0) {
+            (bool ok, ) = msg.sender.call{value: refund}("");
+            require(ok, "fee refund failed");
+        }
     }
 
     // ── Pricing helpers (18-decimal USD values) ───────────────────────────────
@@ -224,10 +288,18 @@ contract LendingPool is ReentrancyGuard {
     }
 
     function withdrawCollateral(uint256 amount, bytes[] calldata priceUpdateData) external payable nonReentrant {
+        require(amount > 0, "zero amount");
         require(collateralOf[msg.sender] >= amount, "insufficient collateral");
-        uint256 price18 = updatePrice(priceUpdateData);
+        _accrue();
         collateralOf[msg.sender] -= amount;
-        if (!_isHealthy(msg.sender, price18)) revert InsufficientCollateral();
+        if (borrowScaled[msg.sender] > 0) {
+            uint256 price18 = _updatePrice(priceUpdateData);
+            if (!_isHealthy(msg.sender, price18)) revert InsufficientCollateral();
+        } else {
+            // A debt-free exit has no price risk and must remain available even
+            // when the external oracle is stale or unavailable.
+            _refund(msg.value);
+        }
         (bool ok, ) = msg.sender.call{value: amount}("");
         if (!ok) revert TransferFailed();
         emit CollateralWithdrawn(msg.sender, amount);
@@ -237,58 +309,90 @@ contract LendingPool is ReentrancyGuard {
 
     function supply(uint256 amount) external nonReentrant {
         require(amount > 0, "zero amount");
-        accrue();
-        usdx.safeTransferFrom(msg.sender, address(this), amount);
+        _accrue();
         uint256 scaled = Math.mulDiv(amount, 1e18, supplyIndex);
-        supplyScaled[msg.sender] += scaled;
+        require(scaled > 0, "amount too small");
+        uint256 beforeSupply = _storedSupply();
+        if (supplierEpoch[msg.sender] != supplyEpoch) {
+            supplierEpoch[msg.sender] = supplyEpoch;
+            supplierShares[msg.sender] = 0;
+        }
+        supplierShares[msg.sender] += scaled;
         totalSupplyScaled += scaled;
+        totalReserves += amount - (_storedSupply() - beforeSupply);
+        usdx.safeTransferFrom(msg.sender, address(this), amount);
         emit Supplied(msg.sender, amount);
     }
 
     function withdrawSupply(uint256 amount) external nonReentrant {
-        accrue();
-        require(supplyBalanceOf(msg.sender) >= amount, "insufficient supply");
-        uint256 scaled = Math.mulDiv(amount, 1e18, supplyIndex);
-        supplyScaled[msg.sender] -= scaled;
+        require(amount > 0, "zero amount");
+        _accrue();
+        uint256 balance = supplyBalanceOf(msg.sender);
+        require(balance >= amount, "insufficient supply");
+        require(availableLiquidity() >= amount, "insufficient liquidity");
+        uint256 beforeSupply = _storedSupply();
+        uint256 scaled = amount == balance
+            ? supplyScaled(msg.sender)
+            : Math.mulDiv(amount, 1e18, supplyIndex, Math.Rounding.Ceil);
+        supplierShares[msg.sender] -= scaled;
         totalSupplyScaled -= scaled;
+        totalReserves += beforeSupply - _storedSupply() - amount;
         usdx.safeTransfer(msg.sender, amount);
         emit SupplyWithdrawn(msg.sender, amount);
     }
 
     function borrow(uint256 amount, bytes[] calldata priceUpdateData) external payable nonReentrant {
         require(amount > 0, "zero amount");
-        accrue();
-        uint256 price18 = updatePrice(priceUpdateData);
-        uint256 newBorrow = borrowBalanceOf(msg.sender) + amount;
-        uint256 maxBorrow = Math.mulDiv(_whbarValue(collateralOf[msg.sender], price18), COLLATERAL_FACTOR, 1e18);
-        if (_usdxValue(newBorrow) > maxBorrow) revert InsufficientCollateral();
-        uint256 scaled = Math.mulDiv(amount, 1e18, borrowIndex);
+        _accrue();
+        uint256 price18 = _updatePrice(priceUpdateData);
+        require(availableLiquidity() >= amount, "insufficient liquidity");
+        uint256 beforeBorrow = _storedBorrow();
+        uint256 scaled = Math.mulDiv(amount, 1e18, borrowIndex, Math.Rounding.Ceil);
         borrowScaled[msg.sender] += scaled;
         totalBorrowScaled += scaled;
+        if (!_isHealthy(msg.sender, price18)) revert InsufficientCollateral();
+        totalReserves += _storedBorrow() - beforeBorrow - amount;
         usdx.safeTransfer(msg.sender, amount);
         emit Borrowed(msg.sender, amount);
     }
 
     function repay(uint256 amount) external nonReentrant {
         require(amount > 0, "zero amount");
-        accrue();
-        uint256 pay = Math.min(amount, borrowBalanceOf(msg.sender));
-        require(pay > 0, "nothing owed");
+        _accrue();
+        require(borrowScaled[msg.sender] > 0, "nothing owed");
+        uint256 pay = _repaymentAmount(msg.sender, amount, borrowIndex);
+        require(pay > 0, "amount too small");
+        _burnDebt(msg.sender, pay);
         usdx.safeTransferFrom(msg.sender, address(this), pay);
-        uint256 scaled = Math.mulDiv(pay, 1e18, borrowIndex);
-        borrowScaled[msg.sender] -= scaled;
-        totalBorrowScaled -= scaled;
         emit Repaid(msg.sender, pay);
+    }
+
+    function _repaymentAmount(address account, uint256 amount, uint256 index) internal view returns (uint256) {
+        uint256 debt = Math.mulDiv(borrowScaled[account], index, 1e18, Math.Rounding.Ceil);
+        if (amount >= debt) return debt;
+        uint256 shares = Math.mulDiv(amount, 1e18, index);
+        return Math.mulDiv(shares, index, 1e18, Math.Rounding.Ceil);
+    }
+
+    /// @dev Full repayment burns every share. Partial repayment never cancels more
+    ///      aggregate debt than the cash received; integer dust belongs to reserves.
+    function _burnDebt(address account, uint256 pay) internal {
+        uint256 beforeBorrow = _storedBorrow();
+        uint256 debt = Math.mulDiv(borrowScaled[account], borrowIndex, 1e18, Math.Rounding.Ceil);
+        uint256 scaled = pay >= debt ? borrowScaled[account] : Math.mulDiv(pay, 1e18, borrowIndex);
+        borrowScaled[account] -= scaled;
+        totalBorrowScaled -= scaled;
+        totalReserves += pay - (beforeBorrow - _storedBorrow());
     }
 
     // ── Liquidation ───────────────────────────────────────────────────────────
 
     /// @notice Repay a borrower's debt, seize a discounted slice of the borrower's
-    ///         WHBAR collateral, swap it back to USDX on SaucerSwap V1 and pay the
+    ///         native HBAR collateral, swap it to USDX on SaucerSwap V1 and pay the
     ///         recovered USDX to the liquidator. The liquidator's profit is the gap
-    ///         between the debt repaid and the swap proceeds; the protocol's loss is
-    ///         bounded by the liquidation bonus. Collateral exhaustion with residual
-    ///         debt is absorbed by the pool (socialized across suppliers).
+    ///         between the debt repaid and the swap proceeds. Exhausted collateral
+    ///         causes residual debt to be written off against reserves first, then
+    ///         proportionally against suppliers. No interest accrues on written-off debt.
     function liquidate(
         address borrower,
         uint256 repayAmount,
@@ -297,36 +401,94 @@ contract LendingPool is ReentrancyGuard {
         bytes[] calldata priceUpdateData
     ) external payable nonReentrant {
         require(borrower != msg.sender, "self liquidation");
-        accrue();
-        uint256 price18 = updatePrice(priceUpdateData);
+        require(repayAmount > 0, "zero amount");
+        _accrue();
+        uint256 price18 = _updatePrice(priceUpdateData);
         if (!isLiquidatable(borrower, price18)) revert HealthyPosition();
 
-        uint256 pay = Math.min(repayAmount, borrowBalanceOf(borrower));
-        usdx.safeTransferFrom(msg.sender, address(this), pay);
-        uint256 debtScaled = Math.mulDiv(pay, 1e18, borrowIndex);
-        borrowScaled[borrower] -= debtScaled;
-        totalBorrowScaled -= debtScaled;
-
-        uint256 seizeUsd18 = Math.mulDiv(_usdxValue(pay), 1e18 + LIQUIDATION_BONUS, 1e18);
-        uint256 seizeWhbar = Math.min(_whbarFromUsd(seizeUsd18, price18), collateralOf[borrower]);
+        (uint256 pay, uint256 seizeWhbar) = previewLiquidation(borrower, repayAmount, price18);
+        if (collateralOf[borrower] > 0) require(pay > 0 && seizeWhbar > 0, "amount too small");
+        if (pay > 0) {
+            _burnDebt(borrower, pay);
+            usdx.safeTransferFrom(msg.sender, address(this), pay);
+        }
         collateralOf[borrower] -= seizeWhbar;
+        if (collateralOf[borrower] == 0) _resolveBadDebt(borrower);
 
         // Swap the seized native HBAR through SaucerSwap V1's payable ETH entry
         // point (path starts at the WHBAR token address; the router wraps HBAR
         // itself). Recovered USDX is paid to the liquidator.
-        address[] memory path = new address[](2);
-        path[0] = address(whbar);
-        path[1] = address(usdx);
-        uint256[] memory amounts = saucerSwapRouter.swapExactETHForTokens{value: seizeWhbar}(
-            minUsdxOut,
-            path,
-            address(this),
-            deadline
-        );
-        uint256 recovered = amounts[amounts.length - 1];
-        usdx.safeTransfer(msg.sender, recovered);
+        uint256 recovered;
+        if (seizeWhbar > 0) {
+            address[] memory path = new address[](2);
+            path[0] = address(whbar);
+            path[1] = address(usdx);
+            uint256 beforeSwap = usdx.balanceOf(address(this));
+            saucerSwapRouter.swapExactETHForTokens{value: seizeWhbar}(minUsdxOut, path, address(this), deadline);
+            recovered = usdx.balanceOf(address(this)) - beforeSwap;
+            require(recovered >= minUsdxOut, "insufficient swap output");
+            usdx.safeTransfer(msg.sender, recovered);
+        } else {
+            require(minUsdxOut == 0, "insufficient swap output");
+        }
 
         emit Liquidated(borrower, msg.sender, pay, seizeWhbar, recovered);
+    }
+
+    /// @notice Quote the repay amount (USDX, 6 decimals) and seizure (HBAR tinybar,
+    ///         8 decimals) using pending interest and the supplied 18-decimal price.
+    ///         This quote does not authenticate the price or guarantee eligibility.
+    function previewLiquidation(
+        address borrower,
+        uint256 repayAmount,
+        uint256 price18
+    ) public view returns (uint256 pay, uint256 seizeHbar) {
+        require(price18 > 0, "invalid price");
+        uint256 collateral = collateralOf[borrower];
+        if (collateral == 0 || repayAmount == 0) return (0, 0);
+        (, uint256 index, , ) = _previewAccrual();
+        uint256 debt = Math.mulDiv(borrowScaled[borrower], index, 1e18, Math.Rounding.Ceil);
+        uint256 limit = Math.min(repayAmount, debt);
+        uint256 collateralPay = Math.max(
+            1,
+            Math.mulDiv(
+                _whbarValue(collateral, price18),
+                10 ** USDX_DECIMALS,
+                1e18 + LIQUIDATION_BONUS,
+                Math.Rounding.Ceil
+            )
+        );
+        if (limit >= collateralPay) return (collateralPay, collateral);
+        pay = _repaymentAmount(borrower, limit, index);
+        uint256 seizeUsd18 = Math.mulDiv(_usdxValue(pay), 1e18 + LIQUIDATION_BONUS, 1e18);
+        seizeHbar = Math.min(_whbarFromUsd(seizeUsd18, price18), collateral);
+    }
+
+    function _resolveBadDebt(address borrower) internal {
+        uint256 shares = borrowScaled[borrower];
+        if (shares == 0) return;
+        uint256 beforeBorrow = _storedBorrow();
+        borrowScaled[borrower] = 0;
+        totalBorrowScaled -= shares;
+        uint256 loss = beforeBorrow - _storedBorrow();
+        uint256 reservesUsed = Math.min(loss, totalReserves);
+        totalReserves -= reservesUsed;
+        uint256 supplierLoss = loss - reservesUsed;
+        if (supplierLoss > 0) {
+            uint256 beforeSupply = _storedSupply();
+            require(supplierLoss <= beforeSupply, "uncovered loss");
+            uint256 remaining = beforeSupply - supplierLoss;
+            supplyIndex = Math.mulDiv(remaining, 1e18, totalSupplyScaled);
+            if (supplyIndex == 0) {
+                // Any sub-index rounding remainder becomes reserve dust. Old
+                // shares cannot participate in a future supplier's deposit.
+                totalSupplyScaled = 0;
+                supplyEpoch++;
+                supplyIndex = 1e18;
+            }
+            totalReserves += remaining - _storedSupply();
+        }
+        emit BadDebtResolved(borrower, loss, reservesUsed, supplierLoss);
     }
 
     // ── Health ────────────────────────────────────────────────────────────────
@@ -345,11 +507,11 @@ contract LendingPool is ReentrancyGuard {
         return borrowValue > threshold;
     }
 
-    /// @notice Borrowing-power ratio; > 1e18 is healthy, 0 debt is max uint.
+    /// @notice Liquidation health factor: below 1e18 is liquidatable; zero debt is max uint.
     function healthFactorOf(address account, uint256 price18) public view returns (uint256) {
         uint256 borrowValue = _usdxValue(borrowBalanceOf(account));
         if (borrowValue == 0) return type(uint256).max;
-        return Math.mulDiv(_whbarValue(collateralOf[account], price18), COLLATERAL_FACTOR, borrowValue);
+        return Math.mulDiv(_whbarValue(collateralOf[account], price18), LIQUIDATION_THRESHOLD, borrowValue);
     }
 
     // ── Testnet faucet ────────────────────────────────────────────────────────
@@ -366,6 +528,7 @@ contract LendingPool is ReentrancyGuard {
 
     function fundFaucet(uint256 amount) external nonReentrant {
         require(msg.sender == admin, "not admin");
+        require(amount > 0, "zero amount");
         usdx.safeTransferFrom(msg.sender, address(this), amount);
         faucetBudget += amount;
     }

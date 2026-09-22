@@ -1,15 +1,12 @@
 import { defineChain } from "viem";
+import { appConfig } from "./config";
 
-/** Hedera testnet (chain 296) with the public Hashio JSON-RPC relay. */
+/** Wallets and JSON-RPC use 18-decimal weibar; contract ABI amounts use tinybars. */
 export const hederaTestnet = defineChain({
   id: 296,
   name: "Hedera Testnet",
-  nativeCurrency: { name: "HBAR", symbol: "HBAR", decimals: 8 },
-  rpcUrls: {
-    default: { http: ["https://testnet.hashio.io/api"] },
-  },
-  blockExplorers: {
-    default: { name: "HashScan", url: "https://hashscan.io/testnet" },
-  },
+  nativeCurrency: { name: "HBAR", symbol: "HBAR", decimals: 18 },
+  rpcUrls: { default: { http: [appConfig.rpcUrl] } },
+  blockExplorers: { default: { name: "HashScan", url: appConfig.hashscan } },
   testnet: true,
 });

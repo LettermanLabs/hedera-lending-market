@@ -1,15 +1,15 @@
 /**
- * Forked-mainnet liquidation test — the SaucerSwap evidence.
+ * Two separate evidence layers, with no mainnet transactions:
  *
- * SaucerSwap's legacy testnet deployment can no longer create pairs (see README),
- * so this test forks Hedera MAINNET and settles a real liquidation against the
- * reserves of the REAL SaucerSwap WHBAR/USDC V1 pool (0.0.1462797: ~2.85M WHBAR /
- * ~268k USDC at fork time), which are transferred on-fork to seed the pair.
+ * 1. Read the deployed SaucerSwap mainnet factory, pair and router through a
+ *    provider without a signer. Assert its exact quote from same-block reserves.
+ * 2. Transfer real HTS asset balances on a LOCAL mainnet fork into an independently
+ *    implemented MIT constant-product test harness, then exercise LendingPool's
+ *    liquidation, collateral, cash and debt accounting against that harness.
  *
- * The AMM is the canonical SaucerSwap V1 implementation — vendored verbatim from
- * saucerswaplabs-core with only the HTS-coupled parts adapted for the fork's
- * emulation (see contracts/fork/*.sol headers). The pool's oracle is a mock (the
- * oracle leg has its own unit tests).
+ * The local swap is a simulation, NOT execution of canonical SaucerSwap contracts.
+ * Its native conversion float does not exercise the deployed WHBAR minting path;
+ * the Pyth oracle is also mocked. These limits are intentional and explicit.
  *
  * Unit convention on the fork: 1 wei = 1 tinybar, matching how Hedera's EVM
  * exposes msg.value (1 HBAR = 1e8 tinybar).
@@ -19,11 +19,15 @@
 import { expect } from "chai";
 import type { Contract } from "ethers";
 import { ethers, network } from "hardhat";
-import { ForkPair, ForkSwapRouter, ForkWHBARWrapper, LendingPool, MockPyth } from "../typechain-types";
+import { ConstantProductHarness, NativeTokenFloat, LendingPool, MockPyth } from "../typechain-types";
 
 const lz = (num: number | bigint) => `0x${BigInt(num).toString(16).padStart(40, "0")}` as `0x${string}`;
 
 const MAINNET = {
+  // Official deployment IDs, verified 2026-09-22:
+  // https://docs.saucerswap.finance/developers/contracts
+  factory: lz(1062784),
+  router: lz(3045981),
   whbar: lz(1456986), // WHBAR HTS token
   usdc: lz(456858), // USDC native HTS token
   pair: lz(1462797), // real SaucerSwap WHBAR/USDC V1 pair — the reserve whale
@@ -44,45 +48,93 @@ async function impersonateWithGas(address: string) {
   await network.provider.request({ method: "hardhat_impersonateAccount", params: [address] });
   await network.provider.request({
     method: "hardhat_setBalance",
-    params: [address, "0x56BC75E2D63100000"], // 100 HBAR for gas
+    params: [address, "0x56BC75E2D63100000"], // Generous gas balance in the fork's native units
   });
   return ethers.getSigner(address);
 }
 
-describe("Liquidation against SaucerSwap mainnet reserves (fork)", function () {
+describe("Deployed SaucerSwap reads and local fork liquidation simulation", function () {
   this.timeout(300_000);
 
-  it("settles an underwater position through the WHBAR/USDC AMM", async () => {
-    const [deployer, supplier, borrower, liquidator] = await ethers.getSigners();
+  it("verifies the deployed mainnet router quote against same-block pair reserves (read-only)", async () => {
+    const provider = new ethers.JsonRpcProvider("https://mainnet.hashio.io/api", 295, {
+      staticNetwork: true,
+      batchMaxCount: 1,
+    });
+    try {
+      const blockTag = await provider.getBlockNumber();
+      const factory = new ethers.Contract(
+        MAINNET.factory,
+        ["function getPair(address,address) view returns (address)"],
+        provider,
+      );
+      const pairAddress = (await factory.getPair(MAINNET.whbar, MAINNET.usdc, { blockTag })) as string;
+      expect(pairAddress).not.to.equal(ethers.ZeroAddress);
+      const pair = new ethers.Contract(
+        pairAddress,
+        [
+          "function token0() view returns (address)",
+          "function token1() view returns (address)",
+          "function getReserves() view returns (uint112,uint112,uint32)",
+        ],
+        provider,
+      );
+      const router = new ethers.Contract(
+        MAINNET.router,
+        ["function getAmountsOut(uint256,address[]) view returns (uint256[])"],
+        provider,
+      );
+      const [token0, token1, reserves, amounts] = await Promise.all([
+        pair.token0({ blockTag }),
+        pair.token1({ blockTag }),
+        pair.getReserves({ blockTag }),
+        router.getAmountsOut(HBAR_UNITS, [MAINNET.whbar, MAINNET.usdc], { blockTag }),
+      ]);
+      expect((token0 as string).toLowerCase()).to.equal(MAINNET.usdc);
+      expect((token1 as string).toLowerCase()).to.equal(MAINNET.whbar);
+      const stableReserve = reserves[0] as bigint;
+      const hbarReserve = reserves[1] as bigint;
+      expect(stableReserve).to.be.gt(0n);
+      expect(hbarReserve).to.be.gt(0n);
+      const feeAdjustedInput = HBAR_UNITS * 997n;
+      const independentlyCalculated = (feeAdjustedInput * stableReserve) / (hbarReserve * 1000n + feeAdjustedInput);
+      expect(amounts[0]).to.equal(HBAR_UNITS);
+      expect(amounts[1]).to.equal(independentlyCalculated);
+      console.log(
+        `   read-only mainnet block ${blockTag}: router 0.0.3045981 quotes 1 WHBAR -> ${amounts[1]} USDC units`,
+      );
+    } finally {
+      provider.destroy();
+    }
+  });
 
-    // ── Seed the canonical AMM with the REAL pair's reserves ──────────────────
+  it("settles an underwater position through the local MIT harness using forked HTS balances", async () => {
+    const [, supplier, borrower, liquidator] = await ethers.getSigners();
+
+    // ── Copy real-token balances on the local fork only ─────────────────────
     const whale = await impersonateWithGas(MAINNET.pair);
     const usdc = new ethers.Contract(MAINNET.usdc, ERC20_ABI, whale);
     const whbarToken = new ethers.Contract(MAINNET.whbar, ERC20_ABI, whale);
 
-    const pair = (await ethers.deployContract("ForkPair")) as unknown as ForkPair;
-    await (await pair.initialize(MAINNET.usdc, MAINNET.whbar)).wait(); // token0=USDC < token1=WHBAR
-    const pairAddress = await pair.getAddress();
-
+    const nativeFloat = (await ethers.deployContract("NativeTokenFloat", [
+      MAINNET.whbar,
+    ])) as unknown as NativeTokenFloat;
+    const router = (await ethers.deployContract("ConstantProductHarness", [
+      MAINNET.whbar,
+      MAINNET.usdc,
+      await nativeFloat.getAddress(),
+    ])) as unknown as ConstantProductHarness;
+    const harnessAddress = await router.getAddress();
     const usdcReserve = 200_000n * ONE_USDC;
     const whbarReserve = 1_000_000n * HBAR_UNITS;
-    await (await usdc.transfer(pairAddress, usdcReserve)).wait();
-    await (await whbarToken.transfer(pairAddress, whbarReserve)).wait();
-    await (await pair.mint(deployer.address)).wait();
-    const [r0, r1] = await pair.getReserves();
-    console.log(`   pair seeded from real reserves: ${r1} WHBAR / ${r0} USDC`);
+    await (await usdc.transfer(harnessAddress, usdcReserve)).wait();
+    await (await whbarToken.transfer(harnessAddress, whbarReserve)).wait();
+    await (await router.seed()).wait();
+    const [r0, r1] = await router.getReserves();
+    console.log(`   local harness seeded with forked balances: ${r1} WHBAR / ${r0} USDC`);
+    await (await whbarToken.transfer(await nativeFloat.getAddress(), whbarReserve)).wait();
 
-    // ── WHBAR wrapper float + router (mirrors SaucerSwapV1RouterV3 flow) ──────
-    const wrapper = (await ethers.deployContract("ForkWHBARWrapper", [MAINNET.whbar])) as unknown as ForkWHBARWrapper;
-    await (await whbarToken.transfer(await wrapper.getAddress(), whbarReserve)).wait();
-
-    const router = (await ethers.deployContract("ForkSwapRouter", [
-      pairAddress,
-      MAINNET.whbar,
-      await wrapper.getAddress(),
-    ])) as unknown as ForkSwapRouter;
-
-    // ── Deploy the pool against the real WHBAR/USDC + fork router ─────────────
+    // ── Deploy the pool against forked HTS assets + the test harness ──────────
     const pyth = (await ethers.deployContract("MockPyth", [10_000_000, -8])) as unknown as MockPyth; // $0.10
     const pool = (await ethers.deployContract("LendingPool", [
       MAINNET.whbar,
@@ -120,43 +172,71 @@ describe("Liquidation against SaucerSwap mainnet reserves (fork)", function () {
     const price = 7_000_000n * 10n ** 10n;
     expect(await pool.isLiquidatable(borrower.address, price)).to.equal(true);
 
-    // ── Liquidate: repay 6 USDC, pool swaps seized HBAR through the AMM ───────
-    const debt = await pool.borrowBalanceOf(borrower.address);
+    // ── Liquidate: repay USDC, then simulate the seized-HBAR swap locally ─────
     const collateralBefore = await pool.collateralOf(borrower.address);
-
-    const seizeUsd18 = (debt * 10n ** 12n * 105n) / 100n;
-    const seized = (seizeUsd18 * 10n ** 8n) / price;
-    const quote = await router.getAmountsOut(seized, [MAINNET.whbar, MAINNET.usdc]);
-    const minOut = (quote[1] as bigint) - (quote[1] as bigint) / 33n; // ~3% slippage
-    console.log(`   seizing ${seized} HBAR-units, AMM quotes ${quote[1]} USDC`);
-
     const usdcAsLiquidator = usdc.connect(liquidator) as unknown as Contract;
-    await (await usdcAsLiquidator.approve(poolAddress, debt)).wait();
+    // This disposable fork account approves the full close, including interest
+    // accrued between the quote, approval, and liquidation blocks.
+    await (await usdcAsLiquidator.approve(poolAddress, ethers.MaxUint256)).wait();
+    const [, quotedSeizure] = await pool.previewLiquidation(borrower.address, ethers.MaxUint256, price);
+    const quote = await router.getAmountsOut(quotedSeizure, [MAINNET.whbar, MAINNET.usdc]);
+    const minOut = quote[1] - quote[1] / 33n; // ~3% slippage
+    console.log(`   quoting ${quotedSeizure} HBAR-units, AMM quotes ${quote[1]} USDC`);
 
     const balanceBefore = (await usdc.balanceOf(liquidator.address)) as bigint;
+    const poolCashBefore = (await usdc.balanceOf(poolAddress)) as bigint;
+    const sharesBefore = await pool.borrowScaled(borrower.address);
+    const [usdcBefore, whbarBefore] = await router.getReserves();
     const latest = await ethers.provider.getBlock("latest");
     const deadline = BigInt(latest!.timestamp) + 300n;
 
-    await expect(pool.connect(liquidator).liquidate(borrower.address, debt, minOut, deadline, NO_UPDATE)).to.emit(
-      pool,
-      "Liquidated",
-    );
+    const tx = await pool
+      .connect(liquidator)
+      .liquidate(borrower.address, ethers.MaxUint256, minOut, deadline, NO_UPDATE);
+    const receipt = await tx.wait();
+    const event = receipt!.logs
+      .map((log) => {
+        try {
+          return pool.interface.parseLog(log);
+        } catch {
+          return null;
+        }
+      })
+      .find((log) => log?.name === "Liquidated");
+    expect(event, "liquidation settlement event").not.to.equal(undefined);
+    const debt = event!.args.repaid as bigint;
+    const seized = event!.args.whbarSeized as bigint;
+    const recovered = event!.args.usdxRecovered as bigint;
 
     const balanceAfter = (await usdc.balanceOf(liquidator.address)) as bigint;
-    const recovered = balanceAfter - balanceBefore + debt; // they paid `debt` into the pool
     const collateralAfter = await pool.collateralOf(borrower.address);
 
-    // NOTE: the profit looks large because the mock oracle ($0.07) diverges from
-    // the seeded pool rate (~$0.20) — the same arbitrage a real liquidator earns
-    // whenever the AMM lags the oracle. The assertions verify the swap itself.
+    // The artificial $0.07 oracle and $0.20 inventory ratio intentionally make the
+    // simulated liquidation profitable. They are not a mainnet price observation.
 
     // ── Assertions ─────────────────────────────────────────────────────────────
+    // Verify debt and seizure at the actual execution index, not an earlier quote.
+    const executionDebt = (sharesBefore * (await pool.borrowIndex()) + 10n ** 18n - 1n) / 10n ** 18n;
+    expect(debt).to.equal(executionDebt);
+    const expectedSeizure = (((debt * 10n ** 12n * 105n) / 100n) * HBAR_UNITS) / price;
+    expect(seized).to.equal(expectedSeizure);
     expect(collateralBefore - collateralAfter).to.equal(seized);
+    // Independently calculate exact constant-product execution from reserves.
+    const inputAfterFee = seized * 997n;
+    const expectedOutput = (inputAfterFee * usdcBefore) / (whbarBefore * 1000n + inputAfterFee);
+    expect(recovered).to.equal(expectedOutput);
+    expect(balanceAfter - balanceBefore).to.equal(recovered - debt);
+    expect(await usdc.balanceOf(poolAddress)).to.equal(poolCashBefore + debt);
+    const [usdcAfter, whbarAfter] = await router.getReserves();
+    expect(usdcBefore - usdcAfter).to.equal(recovered);
+    expect(whbarAfter - whbarBefore).to.equal(seized);
+    expect(await pool.borrowScaled(borrower.address)).to.equal(0n);
+    expect(await pool.borrowBalanceOf(borrower.address)).to.equal(0n);
     expect(recovered).to.be.gte(minOut);
     expect(recovered).to.be.gt(debt); // the liquidation incentive
     console.log(
       `   liquidator profit: ${(recovered - debt) / ONE_USDC} USDC — settled through ` +
-        `the SaucerSwap V1 AMM against real WHBAR/USDC reserves`,
+        `the local constant-product harness using forked WHBAR/USDC balances`,
     );
   });
 });
