@@ -23,3 +23,7 @@ packages/hardhat/deployments/
 # logs / os
 *.log
 .DS_Store
+
+# local server journals and compiler metadata
+.data/
+*.tsbuildinfo

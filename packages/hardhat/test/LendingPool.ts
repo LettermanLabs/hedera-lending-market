@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
 import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import { LendingPool, MockPyth, MockSaucerSwapRouter, MockUSDX, MockWHBAR } from "../typechain-types";
 
@@ -133,9 +133,11 @@ describe("LendingPool", () => {
       await pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR });
       await pool.connect(bob).borrow(10n * ONE_USDX, NO_UPDATE);
 
-      await usdx.connect(bob).approve(await pool.getAddress(), 10n * ONE_USDX);
+      await usdx.connect(bob).approve(await pool.getAddress(), ethers.MaxUint256);
       await expect(pool.connect(bob).repay(4n * ONE_USDX)).to.emit(pool, "Repaid");
-      expect(await pool.borrowBalanceOf(bob.address)).to.equal(6n * ONE_USDX);
+      // Interest also accrues during the approval/repayment blocks. A partial
+      // repayment can leave one unit of conservative share-rounding dust.
+      expect(await pool.borrowBalanceOf(bob.address)).to.be.within(6n * ONE_USDX, 6n * ONE_USDX + 2n);
       await pool.connect(bob).repay(100n * ONE_USDX); // overpay clamps to owed
       expect(await pool.borrowBalanceOf(bob.address)).to.equal(0n);
     });
@@ -158,7 +160,7 @@ describe("LendingPool", () => {
       const borrowAfter = await pool.borrowBalanceOf(bob.address);
       const supplyAfter = await pool.supplyBalanceOf(alice.address);
 
-      // ~24% APY at 0.1% utilization → debt grows, suppliers earn (minus 10% reserve).
+      // ~2.038% annual rate at 0.1% utilization → debt grows, suppliers earn.
       expect(borrowAfter).to.be.gt(borrowBefore);
       expect(supplyAfter).to.be.gt(supplyBefore);
       expect(borrowAfter - borrowBefore).to.be.gt(supplyAfter - supplyBefore);
@@ -231,7 +233,10 @@ describe("LendingPool", () => {
         "Liquidated",
       );
 
-      expect(await pool.borrowBalanceOf(bob.address)).to.equal(borrowBefore - 10n * ONE_USDX);
+      expect(await pool.borrowBalanceOf(bob.address)).to.be.within(
+        borrowBefore - 10n * ONE_USDX,
+        borrowBefore - 10n * ONE_USDX + 2n,
+      );
       expect(await pool.collateralOf(bob.address)).to.equal(collateralBefore - (525n * ONE_HBAR) / 10n);
       // Liquidator: -10 USDX repaid, +13.125 USDX swap proceeds.
       const profit = (await usdx.balanceOf(alice.address)) - balanceBefore;
@@ -286,6 +291,276 @@ describe("LendingPool", () => {
       await expect(pool.connect(alice).setFaucetEnabled(false)).to.be.revertedWith("not admin");
       await pool.connect(admin).setFaucetEnabled(false);
       expect(await pool.faucetEnabled()).to.equal(false);
+    });
+  });
+
+  describe("accounting regressions", () => {
+    async function activeFixture() {
+      const f = await deployFixture();
+      const { alice, bob, pool, usdx } = f;
+      await usdx.connect(alice).approve(await pool.getAddress(), ethers.MaxUint256);
+      await usdx.connect(bob).approve(await pool.getAddress(), ethers.MaxUint256);
+      await pool.connect(alice).supply(20n * ONE_USDX);
+      await pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR });
+      await pool.connect(bob).borrow(15n * ONE_USDX, NO_UPDATE);
+      return f;
+    }
+
+    async function assertAccounting(f: Awaited<ReturnType<typeof deployFixture>>, accounts: string[]) {
+      await f.pool.accrue();
+      const supplyShares = await Promise.all(accounts.map((account) => f.pool.supplyScaled(account)));
+      const borrowShares = await Promise.all(accounts.map((account) => f.pool.borrowScaled(account)));
+      expect(await f.pool.totalSupplyScaled()).to.equal(supplyShares.reduce((a, b) => a + b, 0n));
+      expect(await f.pool.totalBorrowScaled()).to.equal(borrowShares.reduce((a, b) => a + b, 0n));
+      // Every accounting unit is backed by pool cash or outstanding debt. Faucet
+      // funds are separate liabilities; neither rounding nor a write-off loses units.
+      const assets = (await f.usdx.balanceOf(await f.pool.getAddress())) + (await f.pool.totalBorrow());
+      const liabilities = (await f.pool.totalSupply()) + (await f.pool.totalReserves()) + (await f.pool.faucetBudget());
+      expect(assets).to.equal(liabilities);
+    }
+
+    it("rejects a collateral withdrawal that only looks healthy before pending interest", async () => {
+      const { bob, pool, pyth } = await loadFixture(activeFixture);
+      await time.increase(15_768_000);
+      await pyth.setPrice(PRICE_025);
+      expect(await pool.borrowBalanceOf(bob.address)).to.be.gt(17n * ONE_USDX);
+      await expect(pool.connect(bob).withdrawCollateral(20n * ONE_HBAR, NO_UPDATE)).to.be.revertedWithCustomError(
+        pool,
+        "InsufficientCollateral",
+      );
+      expect(await pool.collateralOf(bob.address)).to.equal(100n * ONE_HBAR);
+    });
+
+    it("charges shares for the smallest borrow and withdrawal after indexes grow", async () => {
+      const f = await loadFixture(activeFixture);
+      const { alice, bob, pool, pyth, usdx } = f;
+      await time.increase(15_768_000);
+      await pyth.setPrice(PRICE_025);
+      await pool.accrue();
+      const supplyShares = await pool.supplyScaled(alice.address);
+      const supplierCash = await usdx.balanceOf(alice.address);
+      await pool.connect(alice).withdrawSupply(1n);
+      expect(await pool.supplyScaled(alice.address)).to.be.lt(supplyShares);
+      expect(await usdx.balanceOf(alice.address)).to.equal(supplierCash + 1n);
+      const debtShares = await pool.borrowScaled(bob.address);
+      await pool.connect(bob).borrow(1n, NO_UPDATE);
+      expect(await pool.borrowScaled(bob.address)).to.be.gt(debtShares);
+      await expect(pool.connect(bob).repay(1n)).to.be.revertedWith("amount too small");
+      await assertAccounting(f, [alice.address, bob.address]);
+    });
+
+    it("clears every debt share on full repayment after accrued interest", async () => {
+      const f = await loadFixture(activeFixture);
+      const { alice, bob, pool, pyth } = f;
+      await time.increase(12_345_678);
+      await pyth.setPrice(PRICE_025);
+      await pool.connect(bob).repay(ethers.MaxUint256);
+      expect(await pool.borrowScaled(bob.address)).to.equal(0n);
+      expect(await pool.borrowBalanceOf(bob.address)).to.equal(0n);
+      expect(await pool.totalBorrowScaled()).to.equal(0n);
+      await pool.connect(bob).withdrawCollateral(100n * ONE_HBAR, NO_UPDATE);
+      const balance = await pool.supplyBalanceOf(alice.address);
+      await pool.connect(alice).withdrawSupply(balance);
+      expect(await pool.supplyScaled(alice.address)).to.equal(0n);
+      await assertAccounting(f, [alice.address, bob.address]);
+    });
+
+    it("does not erase interest when anyone accrues at short intervals", async () => {
+      const { pool } = await loadFixture(activeFixture);
+      const snapshot = await network.provider.send("evm_snapshot");
+      const start = await time.latest();
+      for (let i = 1; i <= 60; i++) {
+        await time.setNextBlockTimestamp(start + i);
+        await pool.accrue();
+      }
+      const frequent = await pool.totalBorrow();
+      await network.provider.send("evm_revert", [snapshot]);
+      await time.setNextBlockTimestamp(start + 60);
+      await pool.accrue();
+      const once = await pool.totalBorrow();
+      expect(frequent).to.be.gte(once);
+      expect(frequent - once).to.be.lte(1n); // negligible compounding over one minute
+      expect(once).to.be.gt(15n * ONE_USDX);
+    });
+
+    it("maintains aggregate shares and asset conservation across multiple accounts and loss", async () => {
+      const f = await loadFixture(deployFixture);
+      const { admin, alice, bob, pool, pyth, usdx } = f;
+      const accounts = [admin.address, alice.address, bob.address];
+      await usdx.connect(admin).approve(await pool.getAddress(), ethers.MaxUint256);
+      await usdx.connect(alice).approve(await pool.getAddress(), ethers.MaxUint256);
+      await usdx.connect(bob).approve(await pool.getAddress(), ethers.MaxUint256);
+      await pool.connect(alice).supply(1_000_000_003n);
+      await pool.connect(admin).supply(500_000_009n);
+      await pool.connect(admin).fundFaucet(1_000n * ONE_USDX);
+      await pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR });
+      await pool.connect(bob).borrow(18_000_001n, NO_UPDATE);
+      await pool.connect(admin).depositCollateral({ value: 200n * ONE_HBAR });
+      await pool.connect(admin).borrow(7_000_003n, NO_UPDATE);
+      await assertAccounting(f, accounts);
+      await time.increase(123_456);
+      await pool.connect(alice).supply(3_000_007n);
+      await pool.connect(alice).withdrawSupply(1_000_003n);
+      await pool.connect(bob).repay(1_000_009n);
+      await assertAccounting(f, accounts);
+      await pyth.setPrice(15_000_000n);
+      await pool
+        .connect(alice)
+        .liquidate(bob.address, ethers.MaxUint256, 0n, BigInt(await time.latest()) + 300n, NO_UPDATE);
+      expect(await pool.borrowScaled(bob.address)).to.equal(0n);
+      expect(await pool.collateralOf(bob.address)).to.equal(0n);
+      await assertAccounting(f, accounts);
+      await pool.connect(bob).claimFaucet();
+      await assertAccounting(f, accounts);
+      await pool.connect(admin).repay(ethers.MaxUint256);
+      await pool.connect(alice).withdrawSupply(await pool.supplyBalanceOf(alice.address));
+      await pool.connect(admin).withdrawSupply(await pool.supplyBalanceOf(admin.address));
+      await assertAccounting(f, accounts);
+    });
+
+    it("uses reserves before suppliers and stops interest on exhausted debt", async () => {
+      const f = await loadFixture(activeFixture);
+      const { alice, bob, pool, pyth } = f;
+      await time.increase(31_536_000);
+      await pyth.setPrice(20_300_000n); // $20.30 collateral, debt ~19.575, reserves ~0.4575
+      await pool.accrue();
+      const supplyBefore = await pool.supplyBalanceOf(alice.address);
+      const reservesBefore = await pool.totalReserves();
+      const [pay, seizure] = await pool.previewLiquidation(bob.address, ethers.MaxUint256, 203_000_000_000_000_000n);
+      expect(pay).to.equal(19_333_334n);
+      expect(seizure).to.equal(100n * ONE_HBAR);
+      const tx = await pool
+        .connect(alice)
+        .liquidate(bob.address, ethers.MaxUint256, 0n, BigInt(await time.latest()) + 300n, NO_UPDATE);
+      const receipt = await tx.wait();
+      const resolved = receipt!.logs
+        .map((log) => {
+          try {
+            return pool.interface.parseLog(log);
+          } catch {
+            return null;
+          }
+        })
+        .find((log) => log?.name === "BadDebtResolved")!;
+      expect(resolved.args.reservesUsed).to.equal(resolved.args.debt);
+      expect(resolved.args.supplierLoss).to.equal(0n);
+      expect(await pool.totalReserves()).to.be.lt(reservesBefore);
+      expect(await pool.supplyBalanceOf(alice.address)).to.be.gte(supplyBefore);
+      expect(await pool.borrowScaled(bob.address)).to.equal(0n);
+      const supplyAfter = await pool.totalSupply();
+      const reservesAfter = await pool.totalReserves();
+      await time.increase(31_536_000);
+      await pool.accrue();
+      expect(await pool.totalBorrow()).to.equal(0n);
+      expect(await pool.totalSupply()).to.equal(supplyAfter);
+      expect(await pool.totalReserves()).to.equal(reservesAfter);
+      await assertAccounting(f, [alice.address, bob.address]);
+    });
+
+    it("shares uncovered bad debt proportionally and preserves recapitalization accounting", async () => {
+      const f = await loadFixture(deployFixture);
+      const { admin, alice, bob, pool, pyth, usdx } = f;
+      await usdx.connect(alice).approve(await pool.getAddress(), ethers.MaxUint256);
+      await usdx.connect(admin).approve(await pool.getAddress(), ethers.MaxUint256);
+      await pool.connect(alice).supply(1_000n * ONE_USDX);
+      await pool.connect(admin).supply(500n * ONE_USDX);
+      await pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR });
+      await pool.connect(bob).borrow(18n * ONE_USDX, NO_UPDATE);
+      await time.increase(31_536_000);
+      await pyth.setPrice(15_000_000n);
+      await pool.accrue();
+      const aliceBefore = await pool.supplyBalanceOf(alice.address);
+      const adminBefore = await pool.supplyBalanceOf(admin.address);
+      await pool
+        .connect(alice)
+        .liquidate(bob.address, ethers.MaxUint256, 0n, BigInt(await time.latest()) + 300n, NO_UPDATE);
+      const aliceLoss = aliceBefore - (await pool.supplyBalanceOf(alice.address));
+      const adminLoss = adminBefore - (await pool.supplyBalanceOf(admin.address));
+      expect(aliceLoss).to.be.gt(2n * ONE_USDX);
+      expect(aliceLoss - adminLoss * 2n).to.be.within(-2n, 2n);
+      expect(await pool.totalReserves()).to.be.lte(1n);
+      expect(await pool.borrowBalanceOf(bob.address)).to.equal(0n);
+      await pool.connect(admin).supply(100n * ONE_USDX);
+      await assertAccounting(f, [alice.address, admin.address, bob.address]);
+    });
+
+    it("does not lend or withdraw the faucet allocation", async () => {
+      const f = await loadFixture(deployFixture);
+      const { admin, alice, bob, pool, usdx } = f;
+      await usdx.connect(admin).approve(await pool.getAddress(), ethers.MaxUint256);
+      await usdx.connect(alice).approve(await pool.getAddress(), ethers.MaxUint256);
+      await pool.connect(admin).fundFaucet(1_000n * ONE_USDX);
+      await pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR });
+      expect(await pool.availableLiquidity()).to.equal(0n);
+      await expect(pool.connect(bob).borrow(ONE_USDX, NO_UPDATE)).to.be.revertedWith("insufficient liquidity");
+      await pool.connect(alice).supply(ONE_USDX);
+      await pool.connect(bob).borrow(ONE_USDX, NO_UPDATE);
+      await expect(pool.connect(alice).withdrawSupply(ONE_USDX)).to.be.revertedWith("insufficient liquidity");
+      await pool.connect(bob).claimFaucet();
+      expect(await pool.faucetBudget()).to.equal(750n * ONE_USDX);
+      await assertAccounting(f, [admin.address, alice.address, bob.address]);
+    });
+
+    it("recognizes direct token donations as reserves instead of unowned lending capital", async () => {
+      const f = await loadFixture(deployFixture);
+      const { admin, alice, bob, pool, usdx } = f;
+      await usdx.connect(admin).transfer(await pool.getAddress(), 100n * ONE_USDX);
+      expect(await pool.availableLiquidity()).to.equal(0n);
+      await expect(pool.accrue())
+        .to.emit(pool, "SurplusRecognized")
+        .withArgs(100n * ONE_USDX);
+      expect(await pool.totalReserves()).to.equal(100n * ONE_USDX);
+      await pool.connect(bob).depositCollateral({ value: 100n * ONE_HBAR });
+      await expect(pool.connect(bob).borrow(ONE_USDX, NO_UPDATE)).to.be.revertedWith("insufficient liquidity");
+      await usdx.connect(alice).approve(await pool.getAddress(), ONE_USDX);
+      await pool.connect(alice).supply(ONE_USDX);
+      expect(await pool.availableLiquidity()).to.equal(ONE_USDX);
+      await assertAccounting(f, [admin.address, alice.address, bob.address]);
+    });
+
+    it("allows debt-free collateral exits during an oracle outage but protects indebted positions", async () => {
+      const { alice, bob, pool } = await loadFixture(activeFixture);
+      await pool.connect(alice).depositCollateral({ value: ONE_HBAR });
+      await time.increase(121);
+      await expect(pool.connect(alice).withdrawCollateral(ONE_HBAR, NO_UPDATE, { value: 5n })).to.changeEtherBalance(
+        pool,
+        -ONE_HBAR,
+      );
+      expect(await pool.collateralOf(alice.address)).to.equal(0n);
+      await expect(pool.connect(bob).withdrawCollateral(ONE_HBAR, NO_UPDATE)).to.be.revertedWith("stale price");
+    });
+
+    it("aligns liquidation health with the 80% threshold while keeping borrowing at 75%", async () => {
+      const { bob, pool } = await loadFixture(activeFixture);
+      const price = 190_000_000_000_000_000n; // 15 debt / 19 collateral = 78.95% LTV
+      expect(await pool.healthFactorOf(bob.address, price)).to.be.gt(10n ** 18n);
+      expect(await pool.isLiquidatable(bob.address, price)).to.equal(false);
+      const lowerPrice = 180_000_000_000_000_000n;
+      expect(await pool.healthFactorOf(bob.address, lowerPrice)).to.be.lt(10n ** 18n);
+      expect(await pool.isLiquidatable(bob.address, lowerPrice)).to.equal(true);
+    });
+  });
+
+  describe("oracle fee safety", () => {
+    it("forwards only the Pyth fee, refunds empty updates, and records freshness", async () => {
+      const { pool, pyth } = await loadFixture(deployFixture);
+      await pyth.setUpdateFee(7n);
+      await expect(pool.updatePrice(["0x1234"], { value: 6n })).to.be.revertedWith("insufficient Pyth fee");
+      await expect(pool.updatePrice(["0x1234"], { value: 11n })).to.changeEtherBalances([pool, pyth], [0n, 7n]);
+      expect(await pool.latestPricePublishTime()).to.equal(await pyth.publishTime());
+      await expect(pool.updatePrice([], { value: 11n })).to.changeEtherBalance(pool, 0n);
+      await time.increase(121);
+      await expect(pool.updatePrice([])).to.be.revertedWith("stale price");
+      await pool.updatePrice(["0x1234"], { value: 7n });
+    });
+
+    it("blocks reentrancy from an oracle fee refund", async () => {
+      const { pool } = await loadFixture(deployFixture);
+      const receiver = await ethers.deployContract("RefundReceiver", [await pool.getAddress()]);
+      await receiver.update([], { value: 123n });
+      expect(await receiver.refunded()).to.equal(123n);
+      expect(await receiver.reentrySucceeded()).to.equal(false);
+      expect(await ethers.provider.getBalance(await pool.getAddress())).to.equal(0n);
     });
   });
 });

@@ -1,10 +1,11 @@
 import * as dotenv from "dotenv";
+import * as path from "path";
 import { AccountId, Client, Hbar, PrivateKey } from "@hiero-ledger/sdk";
 import { JsonRpcProvider, Wallet } from "ethers";
 import { TESTNET } from "./config";
 
-// Scripts run from packages/hardhat (npm workspace); the repo-root .env is two levels up.
-dotenv.config({ path: "../../.env" });
+// Scripts run from packages/hardhat (workspace execution); the repo-root .env is two levels up.
+dotenv.config({ path: path.join(__dirname, "../../../../.env") });
 
 /** Parses an ECDSA hex key, DER-encoded hex key, or falls back to auto-detection. */
 export function parsePrivateKey(key: string): PrivateKey {
@@ -49,7 +50,7 @@ export function hederaClient() {
 }
 
 export function ethersProvider(): JsonRpcProvider {
-  return new JsonRpcProvider(TESTNET.rpcUrl, TESTNET.chainId, {
+  return new JsonRpcProvider(process.env.HEDERA_RPC_URL || TESTNET.rpcUrl, TESTNET.chainId, {
     batchMaxCount: 1,
   });
 }

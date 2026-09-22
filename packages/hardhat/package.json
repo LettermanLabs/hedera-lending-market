@@ -12,11 +12,11 @@
     "bootstrap": "hardhat run scripts/bootstrap.ts --network hederaTestnet",
     "associate": "hardhat run scripts/associate.ts --network hederaTestnet",
     "export-abis": "hardhat run scripts/exportAbis.ts --no-compile",
-    "lint": "prettier --check 'contracts/**/*.sol' 'scripts/**/*.ts' 'test/**/*.ts' && eslint .",
+    "lint": "tsc --noEmit && prettier --check 'contracts/**/*.sol' 'scripts/**/*.ts' 'test/**/*.ts' && eslint .",
     "test:fork": "HEDERA_FORKING=true hardhat test test-fork/liquidation.fork.test.ts"
   },
   "dependencies": {
-    "@hiero-ledger/sdk": "^2.58.0",
+    "@hiero-ledger/sdk": "^2.88.0",
     "@openzeppelin/contracts": "^5.2.0",
     "@pythnetwork/pyth-sdk-solidity": "^4.0.0",
     "dotenv": "^16.4.5"

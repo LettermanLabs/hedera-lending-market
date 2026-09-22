@@ -1,81 +1,66 @@
-# AGENTS.md — AI-assisted development guide
+# Agent guide
 
-This repo is a scaffold-hbar external template: a lending market dapp on Hedera
-testnet. Read this before changing code.
+This is a scaffold-hbar external lending template for **Hedera testnet**. Read the
+README for setup, required API access and limits of the local fork-harness evidence.
 
-## What this repo is
+## Layout and commands
 
-- `packages/hardhat`: Solidity (`LendingPool.sol` + mocks), Hardhat tests, and the
-  deploy pipeline (HTS token creation, HCS topic, SaucerSwap seeding).
-- `packages/nextjs`: Next.js 15 app (App Router) with wagmi 2 + RainbowKit, Tailwind 4.
-- `template.json`: the scaffold-hbar manifest. Keep it valid. It declares the rename
-  placeholder `HederaLendingTemplate` (only used in the root `package.json` name) and
-  the env vars the CLI writes into `.env.example`.
+- `packages/hardhat`: Solidity, local/fork tests, deployment/bootstrap and ABI export.
+- `packages/nextjs`: Next.js App Router, wagmi/RainbowKit, server price/HCS routes.
+- `template.json`: current scaffold CLI manifest with npm-only capabilities,
+  directory-based rename map, env descriptions and `outro.sections`.
 
-## Commands
+Use Node 22.14+ or 24 LTS and `npm` 10+. Root commands:
 
 | Command | Purpose |
 | --- | --- |
-| `npm test` | Hardhat unit tests (17), with mocks for Pyth, SaucerSwap, WHBAR, USDX |
-| `npm run compile` | Compile contracts |
-| `npm run deploy` | Create HTS USDX, deploy pool, seed liquidity + faucet, create HCS topic |
-| `npm run bootstrap` | Seed the SaucerSwap V1 WHBAR/USDX pool (run after deploy) |
-| `npm run associate` | Associate the operator account with USDX + WHBAR |
-| `npm run export-abis` | Regenerate `packages/nextjs/contracts/abis/` from artifacts |
-| `npm run dev` / `build` / `lint` | Next.js dev server / production build / tsc + eslint |
+| `npm ci` | Install locked workspace dependencies |
+| `npm run compile` / `npm run export-abis` | Compile contracts, then refresh frontend ABIs |
+| `npm run test` | Contract, app/server, and tooling regression tests |
+| `npm run test:fork` | Network-dependent Hedera mainnet-fork liquidation and ecosystem checks |
+| `npm run lint` / `npm run build` | Both workspace type/lint checks; production app build |
+| `npm run check` | App validation (also works after CLI consumes the manifest) |
+| `npm run check:template` / `./self-check.sh` | Strict template source validation; manifest required |
+| `npm run audit:production` | Production dependency audit, high/critical gate |
+| `npm run dev` | Local app, usable without deployment credentials |
+| `npm run deploy` | Paid testnet deployment; resumable progress journal |
+| `npm run bootstrap` | Paid attempt to create/seed a testnet swap route |
+| `npm run associate` | Associate the configured operator with USDX/WHBAR |
 
-## Hard rules
+## Invariants
 
-1. Never commit `.env` or secrets. The deployer key lives only in the repo-root
-   `.env` (gitignored). The frontend gets `NEXT_PUBLIC_*` values via
-   `packages/nextjs/.env.local`, also gitignored.
-2. Testnet only. Contracts are wired to Hedera testnet constants in
-   `packages/hardhat/scripts/lib/config.ts`. Verify addresses against the
-   [SaucerSwap deployments](https://docs.saucerswap.finance/developers/contracts) and
-   [Pyth EVM addresses](https://docs.pyth.network/price-feeds/core/contract-addresses/evm)
-   before changing them.
-3. Decimals: HBAR/WHBAR = 8, USDX = 6, USD values in the pool = 18. Pyth prices carry
-   their own exponent; normalize via `10 ** (18 + expo)`.
-4. Collateral is native HBAR, custodied by the pool. It is never wrapped client-side.
-   The SaucerSwap leg uses the router's payable ETH entry point
-   (`swapExactETHForTokens`) with path `[WHBAR, USDX]`; the router wraps HBAR itself.
-   EVM value units are wei (1 HBAR = 1e18 wei), and the Hashio relay rejects non-zero
-   value below 1e10 wei (1 tinybar).
-5. The pull-oracle pattern is not optional: every entry point that reads a price takes
-   `bytes[] priceUpdateData`, forwards `getUpdateFee` as msg.value, then calls
-   `getPriceNoOlderThan(id, 120s)`. Do not cache-and-trust beyond 120s.
+1. Never commit secrets, `.env`, `.env.local`, deployment records or server journals.
+   Deploy reads root `.env`; Next.js server credentials are configured separately in
+   `packages/nextjs/.env.local`. Secrets never use `NEXT_PUBLIC_`.
+2. HBAR/WHBAR contract quantities and contract-side `msg.value` are **8 decimals**.
+   Wallet/ethers JSON-RPC `value` is **18 decimals** (tinybars × 1e10). USDX is **6**;
+   USD prices and indexes are **18**. Convert only at the transaction boundary.
+3. Every balance-changing action accrues interest before checking account health.
+   Borrowing limits use 75% LTV; liquidations/health factor use the 80% threshold.
+   Use conservative rounding, preserve aggregate scaled-share invariants and clear
+   residual shares on full repayments. Supplier losses must not create future claims.
+4. Oracle-sensitive writes forward the tinybar Pyth update fee and enforce freshness.
+   The server proxy returns signed updates from authorized Hermes access; never substitute
+   fabricated prices. Client config uses direct `process.env.NEXT_PUBLIC_*` references.
+5. HCS messages come from confirmed pool receipt events, not caller-supplied amounts or
+   identities. Preserve submit-key restriction, persistent deduplication, paid-budget
+   limits, and fail-closed handling of uncertain submissions. HCS is optional best effort.
+6. Scripts are testnet-only. Never infer successful pair creation from a caught error.
+   LP token association uses `pair.lpToken()`, not the pair address. Failed/uncertain
+   journal steps require reconciliation; completed seeds must not run twice. Preserve
+   custom environment entries when updating generated addresses.
 
-## Conventions
+## Change validation
 
-- Solidity 0.8.24, OpenZeppelin 5 (Math.mulDiv, SafeERC20, ReentrancyGuard). Custom
-  errors (`error InsufficientCollateral()` etc.) use `if (!cond) revert Err();` since
-  Solidity has no `require(cond, CustomError())` form.
-- Interest accounting: scaled balances times a global index (`supplyIndex` /
-  `borrowIndex`, 1e18 = 1.0). `accrue()` must run before any balance-affecting op.
-- Frontend reads go through `lib/pool.ts` (`usePoolRead`); reads stay disabled until
-  `NEXT_PUBLIC_LENDING_POOL` exists, so the app must boot unconfigured.
-- After changing contract ABIs, run `npm run compile && npm run export-abis`.
-- Env access: `lib/config.ts` (client), `process.env` directly in the API route (server).
+After ABI changes run compile + export. Unit tests mock integrations; add regressions
+for accounting/unit/receipt bugs, then run tests, lint and build. Check configured and
+unconfigured pages in a real browser because a successful build does not prove boot.
+Run the separate fork test for contract/integration changes when the RPC is available.
 
-## Integration points not to break
-
-| File | Integration |
-| --- | --- |
-| `contracts/LendingPool.sol` → `updatePrice` | Pyth pull oracle (HBAR/USD) |
-| `contracts/LendingPool.sol` → `liquidate` | SaucerSwap V1 router (`swapExactETHForTokens`, payable ETH leg) |
-| `contracts/fork/*` + `test-fork/` | Vendored SaucerSwap V1 AMM (verbatim math) for the mainnet-fork liquidation test (`npm run test:fork`); only HTS-coupled parts adapted, see file headers |
-| `contracts/LendingPool.sol` → `associateTokens` | HTS precompile `0x167` |
-| `scripts/deploy.ts` | HTS `TokenCreateTransaction`, HCS `TopicCreateTransaction` |
-| `app/api/activity/route.ts` | HCS `TopicMessageSubmitTransaction` (server-side operator) |
-| `components/LiquidationWatch.tsx`, `lib/mirror.ts` | Mirror node REST (event scan, topic feed) |
-
-## Testing
-
-- Unit tests mock all ecosystem contracts (`contracts/mocks/`). The liquidation tests
-  assert the exact seizure math (`repay × 1.05 / price`, capped at collateral); keep
-  them that precise.
-- The mock SaucerSwap router is fixed-rate and needs a USDX float; see the fixture in
-  `test/LendingPool.ts`.
-- Before submitting changes, `npm test && npm run lint && npm run build` must pass,
-  `npm run test:fork` must pass against Hedera mainnet, and `./self-check.sh` should
-  stay green. Fork tests need network access to `mainnet.hashio.io` and the mirror node.
+Keep claims precise: the fork liquidation test uses mainnet HTS asset emulation,
+a locally deployed MIT constant-product harness with seeded reserves, and a mock
+oracle. That liquidation is not executed through the deployed SaucerSwap router.
+Any read-only deployed-contract check is separate evidence. Preserve the historical
+GPL attribution in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and its license
+copy; replacing fixtures does not relicense older revisions. Historical testnet links
+do not validate a newly changed LendingPool contract.

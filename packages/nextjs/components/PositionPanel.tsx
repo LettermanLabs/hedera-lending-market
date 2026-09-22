@@ -1,23 +1,30 @@
 "use client";
 
 import { useState } from "react";
-import { getPublicClient } from "wagmi/actions";
-import { useAccount, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
-import { formatUnits, parseUnits } from "viem";
+import { formatUnits } from "viem";
 import { LendingPoolAbi } from "../contracts/abis/LendingPool";
 import { erc20Abi } from "../contracts/abis/erc20";
 import { pythAbi } from "../contracts/abis/pyth";
-import { reportActivity } from "../lib/activity";
+import { parsePositiveAmount, tinybarToWeibar } from "../lib/amounts";
 import { appConfig } from "../lib/config";
 import { fetchPriceUpdate } from "../lib/hermes";
-import { errMsg, fmtHbar, fmtUsdx } from "../lib/format";
+import { fmtHbar, fmtUsdx } from "../lib/format";
 import { useErc20Read, usePoolRead } from "../lib/pool";
-import { config } from "../lib/wagmi";
+import { useMarketTransaction } from "../lib/useMarketTransaction";
+import { TransactionStatus } from "./TransactionStatus";
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="mb-1 block text-xs uppercase tracking-wide text-slate-400">
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -30,26 +37,33 @@ const btnCls =
   "rounded-lg px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
 
 export function PositionPanel() {
-  const { address } = useAccount();
+  const transaction = useMarketTransaction();
+  const { address, publicClient, writeContractAsync, execute, confirm, busy } =
+    transaction;
   const pool = appConfig.pool!;
   const usdx = appConfig.usdxEvm!;
-
-  const { data: supplyBal } = usePoolRead("supplyBalanceOf", [address]) as { data: bigint | undefined };
-  const { data: borrowBal } = usePoolRead("borrowBalanceOf", [address]) as { data: bigint | undefined };
-  const { data: collateral } = usePoolRead("collateralOf", [address]) as { data: bigint | undefined };
-  const { data: price } = usePoolRead("latestPrice18") as { data: bigint | undefined };
-  const { data: health } = usePoolRead("healthFactorOf", [address, price ?? 0n]) as {
-    data: bigint | undefined;
-  };
-  const { data: usdxBal } = useErc20Read(usdx, "balanceOf", [address]) as { data: bigint | undefined };
-  const { data: allowance } = useErc20Read(usdx, "allowance", [address, pool]) as {
-    data: bigint | undefined;
-  };
-
-  const { writeContractAsync, data: hash, isPending } = useWriteContract();
-  const { isLoading: confirming } = useWaitForTransactionReceipt({ hash });
-  const busy = isPending || confirming;
-  const [error, setError] = useState<string | null>(null);
+  const supplyRead = usePoolRead("supplyBalanceOf", [address]);
+  const borrowRead = usePoolRead("borrowBalanceOf", [address]);
+  const collateralRead = usePoolRead("collateralOf", [address]);
+  const priceRead = usePoolRead("latestPrice18");
+  const price = priceRead.data as bigint | undefined;
+  const healthRead = usePoolRead(
+    "healthFactorOf",
+    [address, price],
+    Boolean(price),
+  );
+  const walletRead = useErc20Read(usdx, "balanceOf", [address]);
+  const supplyBal = supplyRead.data as bigint | undefined;
+  const borrowBal = borrowRead.data as bigint | undefined;
+  const collateral = collateralRead.data as bigint | undefined;
+  const health = healthRead.data as bigint | undefined;
+  const usdxBal = walletRead.data as bigint | undefined;
+  const readError =
+    supplyRead.error ??
+    borrowRead.error ??
+    collateralRead.error ??
+    priceRead.error ??
+    walletRead.error;
   const [supplyAmt, setSupplyAmt] = useState("");
   const [collateralAmt, setCollateralAmt] = useState("");
   const [borrowAmt, setBorrowAmt] = useState("");
@@ -62,102 +76,144 @@ export function PositionPanel() {
     );
   }
 
-  /** Builds a Pyth pull-oracle payload + fee for the given entry point. */
   const pythUpdate = async () => {
     const updateData = await fetchPriceUpdate(appConfig.hbarUsdFeedId);
-    const publicClient = getPublicClient(config);
     const fee = await publicClient.readContract({
       address: appConfig.pyth,
       abi: pythAbi,
       functionName: "getUpdateFee",
       args: [updateData],
     });
-    return { updateData, fee };
+    return { updateData, value: tinybarToWeibar(fee) };
   };
 
-  const run = async (fn: () => Promise<unknown>) => {
-    setError(null);
-    try {
-      const txHash = await fn();
-      if (typeof txHash === "string") {
-        reportActivity({ type: "tx", account: address, txHash });
-      }
-    } catch (e) {
-      setError(errMsg(e));
+  const approve = async (amount: bigint) => {
+    const allowance = await publicClient.readContract({
+      address: usdx,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [address, pool],
+    });
+    if (allowance < amount) {
+      await confirm(
+        await writeContractAsync({
+          account: address,
+          chainId: appConfig.chainId,
+          address: usdx,
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [pool, amount],
+        }),
+      );
     }
   };
 
   const doSupply = () =>
-    run(async () => {
-      const amount = parseUnits(supplyAmt, 6);
-      if ((allowance ?? 0n) < amount) {
-        await writeContractAsync({ address: usdx, abi: erc20Abi, functionName: "approve", args: [pool, amount] });
-      }
-      return writeContractAsync({
-        address: pool,
-        abi: LendingPoolAbi,
-        functionName: "supply",
-        args: [amount],
-      });
-    });
+    execute(
+      async () => {
+        const amount = parsePositiveAmount(supplyAmt, 6, "USDX");
+        await approve(amount);
+        return writeContractAsync({
+          account: address,
+          chainId: appConfig.chainId,
+          address: pool,
+          abi: LendingPoolAbi,
+          functionName: "supply",
+          args: [amount],
+        });
+      },
+      () => setSupplyAmt(""),
+    );
 
   const doWithdrawSupply = () =>
-    run(() =>
-      writeContractAsync({
-        address: pool,
-        abi: LendingPoolAbi,
-        functionName: "withdrawSupply",
-        args: [parseUnits(supplyAmt, 6)],
-      }),
+    execute(
+      () =>
+        writeContractAsync({
+          account: address,
+          chainId: appConfig.chainId,
+          address: pool,
+          abi: LendingPoolAbi,
+          functionName: "withdrawSupply",
+          args: [parsePositiveAmount(supplyAmt, 6, "USDX")],
+        }),
+      () => setSupplyAmt(""),
     );
 
   const doDepositCollateral = () =>
-    run(() =>
-      writeContractAsync({
-        address: pool,
-        abi: LendingPoolAbi,
-        functionName: "depositCollateral",
-        value: parseUnits(collateralAmt, 8),
-      }),
+    execute(
+      () =>
+        writeContractAsync({
+          account: address,
+          chainId: appConfig.chainId,
+          address: pool,
+          abi: LendingPoolAbi,
+          functionName: "depositCollateral",
+          value: tinybarToWeibar(parsePositiveAmount(collateralAmt, 8, "HBAR")),
+        }),
+      () => setCollateralAmt(""),
     );
 
   const doWithdrawCollateral = () =>
-    run(async () => {
-      const { updateData, fee } = await pythUpdate();
-      return writeContractAsync({
-        address: pool,
-        abi: LendingPoolAbi,
-        functionName: "withdrawCollateral",
-        args: [parseUnits(collateralAmt, 8), updateData],
-        value: fee,
-      });
-    });
+    execute(
+      async () => {
+        const amount = parsePositiveAmount(collateralAmt, 8, "HBAR");
+        const debtShares = await publicClient.readContract({
+          address: pool,
+          abi: LendingPoolAbi,
+          functionName: "borrowScaled",
+          args: [address],
+        });
+        const { updateData, value } =
+          debtShares === 0n
+            ? { updateData: [] as `0x${string}`[], value: 0n }
+            : await pythUpdate();
+        return writeContractAsync({
+          account: address,
+          chainId: appConfig.chainId,
+          address: pool,
+          abi: LendingPoolAbi,
+          functionName: "withdrawCollateral",
+          args: [amount, updateData],
+          value,
+        });
+      },
+      () => setCollateralAmt(""),
+    );
 
   const doBorrow = () =>
-    run(async () => {
-      const { updateData, fee } = await pythUpdate();
-      return writeContractAsync({
-        address: pool,
-        abi: LendingPoolAbi,
-        functionName: "borrow",
-        args: [parseUnits(borrowAmt, 6), updateData],
-        value: fee,
-      });
-    });
+    execute(
+      async () => {
+        const amount = parsePositiveAmount(borrowAmt, 6, "USDX");
+        const { updateData, value } = await pythUpdate();
+        return writeContractAsync({
+          account: address,
+          chainId: appConfig.chainId,
+          address: pool,
+          abi: LendingPoolAbi,
+          functionName: "borrow",
+          args: [amount, updateData],
+          value,
+        });
+      },
+      () => setBorrowAmt(""),
+    );
 
   const doRepay = () =>
-    run(async () => {
-      const amount = parseUnits(borrowAmt, 6);
-      if ((allowance ?? 0n) < amount) {
-        await writeContractAsync({ address: usdx, abi: erc20Abi, functionName: "approve", args: [pool, amount] });
-      }
-      return writeContractAsync({
-        address: pool,
-        abi: LendingPoolAbi,
-        functionName: "repay",
-        args: [amount],
-      });
-    });
+    execute(
+      async () => {
+        const amount = parsePositiveAmount(borrowAmt, 6, "USDX");
+        await approve(amount);
+        return writeContractAsync({
+          account: address,
+          chainId: appConfig.chainId,
+          address: pool,
+          abi: LendingPoolAbi,
+          functionName: "repay",
+          args: [amount],
+        });
+      },
+      () => setBorrowAmt(""),
+    );
 
   const healthLabel =
     health === undefined
@@ -185,8 +241,10 @@ export function PositionPanel() {
             <dd className="font-mono">{fmtHbar(collateral)}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-slate-400">Health factor</dt>
-            <dd className={`font-mono ${health !== undefined && health < 10n ** 18n ? "text-red-400" : "text-emerald-400"}`}>
+            <dt className="text-slate-400">Health factor (cached price)</dt>
+            <dd
+              className={`font-mono ${health !== undefined && health < 10n ** 18n ? "text-red-400" : "text-emerald-400"}`}
+            >
               {healthLabel}
             </dd>
           </div>
@@ -197,9 +255,11 @@ export function PositionPanel() {
         </dl>
         {usdxBal === 0n ? (
           <p className="mt-4 rounded-lg bg-slate-800/60 p-3 text-xs leading-relaxed text-slate-400">
-            No USDX yet? Use the faucet below. New wallets also need to <strong>associate</strong> the USDX token
-            (token id {appConfig.usdxTokenId ?? "—"}) in HashPack before receiving it, or run{" "}
-            <code className="text-emerald-300">npm run associate</code> with your credentials.
+            No USDX yet? Use the faucet below. New wallets also need to{" "}
+            <strong>associate</strong> the USDX token (token id{" "}
+            {appConfig.usdxTokenId ?? "—"}) in HashPack before receiving it, or
+            run <code className="text-emerald-300">npm run associate</code> with
+            your credentials.
           </p>
         ) : null}
       </section>
@@ -209,10 +269,20 @@ export function PositionPanel() {
         <h3 className="mb-4 font-semibold">Supply / withdraw USDX</h3>
         <div className="space-y-3">
           <Field label="Amount (USDX)">
-            <input className={inputCls} value={supplyAmt} onChange={e => setSupplyAmt(e.target.value)} placeholder="1000" />
+            <input
+              inputMode="decimal"
+              className={inputCls}
+              value={supplyAmt}
+              onChange={(e) => setSupplyAmt(e.target.value)}
+              placeholder="1000"
+            />
           </Field>
           <div className="flex gap-2">
-            <button onClick={doSupply} disabled={busy || !supplyAmt} className={`${btnCls} bg-emerald-600 text-white hover:bg-emerald-500`}>
+            <button
+              onClick={doSupply}
+              disabled={busy || !supplyAmt}
+              className={`${btnCls} bg-emerald-600 text-white hover:bg-emerald-500`}
+            >
               Supply
             </button>
             <button
@@ -231,9 +301,10 @@ export function PositionPanel() {
         <div className="space-y-3">
           <Field label="Amount (HBAR)">
             <input
+              inputMode="decimal"
               className={inputCls}
               value={collateralAmt}
-              onChange={e => setCollateralAmt(e.target.value)}
+              onChange={(e) => setCollateralAmt(e.target.value)}
               placeholder="100"
             />
           </Field>
@@ -250,7 +321,7 @@ export function PositionPanel() {
               disabled={busy || !collateralAmt}
               className={`${btnCls} border border-slate-700 text-slate-200 hover:bg-slate-800`}
             >
-              Withdraw (Pyth update)
+              Withdraw
             </button>
           </div>
         </div>
@@ -261,11 +332,21 @@ export function PositionPanel() {
         <h3 className="mb-4 font-semibold">Borrow / repay USDX</h3>
         <div className="space-y-3">
           <Field label="Amount (USDX)">
-            <input className={inputCls} value={borrowAmt} onChange={e => setBorrowAmt(e.target.value)} placeholder="500" />
+            <input
+              inputMode="decimal"
+              className={inputCls}
+              value={borrowAmt}
+              onChange={(e) => setBorrowAmt(e.target.value)}
+              placeholder="500"
+            />
           </Field>
           <div className="flex gap-2">
-            <button onClick={doBorrow} disabled={busy || !borrowAmt} className={`${btnCls} bg-emerald-600 text-white hover:bg-emerald-500`}>
-              Borrow (Pyth update)
+            <button
+              onClick={doBorrow}
+              disabled={busy || !borrowAmt}
+              className={`${btnCls} bg-emerald-600 text-white hover:bg-emerald-500`}
+            >
+              Borrow
             </button>
             <button
               onClick={doRepay}
@@ -276,17 +357,27 @@ export function PositionPanel() {
             </button>
           </div>
           <p className="text-xs text-slate-500">
-            Borrows and collateral withdrawals submit a fresh Pyth price update inside the transaction (pull oracle)
-            and pay the small update fee in HBAR.
+            Borrows and withdrawals with outstanding debt submit a fresh Pyth
+            price update inside the transaction (pull oracle) and pay the small
+            update fee in HBAR.
           </p>
         </div>
       </section>
 
-      {error ? (
-        <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300 lg:col-span-3">
-          {error}
-        </div>
-      ) : null}
+      <div className="space-y-2 lg:col-span-3">
+        {readError ? (
+          <p role="alert" className="text-xs text-amber-300">
+            Position data is temporarily unavailable. Balances are not
+            confirmed; retry when the RPC is available.
+          </p>
+        ) : null}
+        <p className="text-xs text-slate-500">
+          Health uses the last price stored by the pool; it is not a live quote.
+          Liquidation starts below 1.00 at the 80% threshold. New borrowing is
+          limited to 75% of collateral value.
+        </p>
+        <TransactionStatus {...transaction} />
+      </div>
     </div>
   );
 }

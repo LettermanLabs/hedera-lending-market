@@ -1,47 +1,49 @@
 "use client";
 
 import { useReadContract } from "wagmi";
+import type { Abi, ContractFunctionName } from "viem";
 import { LendingPoolAbi } from "../contracts/abis/LendingPool";
+import { erc20Abi } from "../contracts/abis/erc20";
 import { appConfig } from "./config";
 
-/**
- * Typed-enough wrappers around the pool contract. Addresses stay undefined until
- * `npm run deploy` writes .env.local, so every read is disabled until configured.
- */
-export function usePoolRead(functionName: string, args: readonly unknown[] = []) {
+type PoolView = ContractFunctionName<typeof LendingPoolAbi, "pure" | "view">;
+
+/** Reads stay disabled until the deployment and every argument are available. */
+export function usePoolRead(
+  functionName: PoolView,
+  args: readonly unknown[] = [],
+  enabled = true,
+) {
   return useReadContract({
     address: appConfig.pool,
-    abi: LendingPoolAbi as unknown as readonly unknown[],
-    functionName: functionName as never,
-    args: args as never,
-    query: { enabled: Boolean(appConfig.pool), refetchInterval: 15_000 },
+    abi: LendingPoolAbi as Abi,
+    functionName,
+    args,
+    query: {
+      enabled:
+        enabled &&
+        Boolean(appConfig.pool) &&
+        args.every((arg) => arg !== undefined && arg !== null),
+      refetchInterval: 15_000,
+    },
   });
 }
 
-export function useErc20Read(address: `0x${string}` | undefined, functionName: string, args: readonly unknown[] = []) {
+export function useErc20Read(
+  address: `0x${string}` | undefined,
+  functionName: "balanceOf" | "allowance",
+  args: readonly unknown[] = [],
+) {
   return useReadContract({
     address,
-    abi: [
-      {
-        inputs: [{ internalType: "address", name: "account", type: "address" }],
-        name: "balanceOf",
-        outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-        stateMutability: "view",
-        type: "function",
-      },
-      {
-        inputs: [
-          { internalType: "address", name: "owner", type: "address" },
-          { internalType: "address", name: "spender", type: "address" },
-        ],
-        name: "allowance",
-        outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-        stateMutability: "view",
-        type: "function",
-      },
-    ] as const,
-    functionName: functionName as never,
-    args: args as never,
-    query: { enabled: Boolean(address), refetchInterval: 15_000 },
+    abi: erc20Abi as Abi,
+    functionName,
+    args,
+    query: {
+      enabled:
+        Boolean(address) &&
+        args.every((arg) => arg !== undefined && arg !== null),
+      refetchInterval: 15_000,
+    },
   });
 }
