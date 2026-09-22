@@ -19,11 +19,11 @@ import "./interfaces/IHederaTokenService.sol";
 ///         swapping it back to USDX on SaucerSwap V1.
 ///
 ///         Hedera services in play:
-///           - HTS  : USDX (and WHBAR) are HTS tokens used through their ERC-20 facade,
-///                    and the pool self-associates via the 0x167 precompile.
-///           - HCSS : not used here directly — activity is mirrored to an HCS topic by
-///                    the frontend/API layer (see packages/nextjs).
-///           - EVM  : all accounting and settlement logic lives in this contract.
+///           - HTS: USDX (and WHBAR in the swap path) are HTS tokens used through their
+///             ERC-20 facade, and the pool self-associates via the 0x167 precompile.
+///           - HCS: activity is mirrored to a topic by the frontend/API layer
+///             (see packages/nextjs); this contract emits the events it mirrors.
+///           - EVM: all accounting and settlement logic lives in this contract.
 contract LendingPool is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
