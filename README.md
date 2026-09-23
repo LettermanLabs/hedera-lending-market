@@ -1,6 +1,6 @@
 # Hedera Lending Market
 
-A lending market built by **LettermanLabs** for Hedera testnet. Supply USDX to earn
+A lending market designed and built by **[LettermanLabs](https://lettermanlabs.com)** for Hedera testnet. Supply USDX to earn
 interest, deposit HBAR as collateral, and borrow against it using Pyth prices.
 Liquidations use SaucerSwap V1, and an optional HCS feed records pool activity.
 
@@ -17,10 +17,25 @@ also need a funded swap route; the current testnet route is unavailable.
 Use **Node.js 22.14+ or 24 LTS** and `npm` 10+:
 
 ```bash
-npx create-scaffold-hbar@latest my-lending-market --template LettermanLabs/hedera-lending-market --network testnet --skip-hedera-skills
+npx create-scaffold-hbar@latest my-lending-market \
+  --template LettermanLabs/hedera-lending-market \
+  -f nextjs-app -s hardhat --package-manager npm \
+  --network testnet --skip-hedera-skills
 cd my-lending-market
 npm run dev
 ```
+
+`npm create scaffold-hbar@latest -- <same arguments>` is equivalent. Add `--yes` for a
+non-interactive run.
+
+Keep the `-f`, `-s` and `--package-manager` flags. The CLI reads this template's
+`template.json` through the unauthenticated GitHub API. If that request fails (for
+example, because of the hourly rate limit), the CLI falls back to its own Foundry
+and Yarn defaults and aborts or produces a broken project. The explicit flags choose
+the only supported stack (Next.js, Hardhat, npm) without relying on that request.
+
+The scaffold CLI accepts Node 20.18.3+, but this template needs Node 22.14+ because
+some pinned dependencies (Pyth's Solidity SDK and wallet packages) require it.
 
 If you cloned the repository directly, run `npm ci` followed by `npm run dev`.
 Open [localhost:3000](http://localhost:3000). The Market and Activity pages show
@@ -64,7 +79,7 @@ Hermes price. LP tokens remain in the pool contract. Scripts are testnet-only.
 `/api/price-update` keeps Hermes credentials on the server and reports a setup error
 if the key is missing or invalid.
 
-`/api/activity` accepts a transaction hash, verifies a recent successful direct pool
+`GET /api/activity` reports whether HCS mirroring is configured. `POST /api/activity` accepts a transaction hash, verifies a recent successful direct pool
 transaction, and derives messages from the receipt's pool events. It checks that the
 HCS topic has a restricted submit key, deduplicates transactions on disk and caps
 paid submissions at 30 verified transactions per UTC hour. Use one durable shared
@@ -156,6 +171,7 @@ npm run build
 npm run check           # app checks, including generated projects; no secrets required
 npm run check:template  # source repository only: additionally requires template.json
 npm run test:fork       # separate mainnet RPC/mirror-node dependent test
+npm run coverage        # Solidity line/branch coverage for the contract tests
 ```
 
 The scaffold CLI removes `template.json` after setup. Use `npm run check` in a

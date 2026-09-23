@@ -5,6 +5,7 @@ import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-chai-matchers";
 import "@nomicfoundation/hardhat-network-helpers";
 import "@typechain/hardhat";
+import "solidity-coverage";
 import { HardhatUserConfig } from "hardhat/config";
 
 // Enable HTS-aware mainnet forking for the local liquidation simulation.

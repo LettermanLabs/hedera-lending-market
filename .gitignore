@@ -14,6 +14,7 @@ packages/nextjs/out/
 packages/hardhat/artifacts/
 packages/hardhat/cache/
 packages/hardhat/coverage/
+packages/hardhat/coverage.json
 packages/hardhat/typechain-types/
 
 # deploy outputs (regenerate with `npm run deploy`)

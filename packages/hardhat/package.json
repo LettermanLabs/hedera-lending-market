@@ -2,6 +2,8 @@
   "name": "@sh/hardhat",
   "version": "1.0.0",
   "private": true,
+  "author": "LettermanLabs (https://lettermanlabs.com)",
+  "license": "MIT",
   "scripts": {
     "chain": "hardhat node",
     "compile": "hardhat compile",
