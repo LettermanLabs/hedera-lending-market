@@ -1,0 +1,84 @@
+{
+  "name": "hedera-lending-market",
+  "description": "Supply USDX and borrow against HBAR on Hedera testnet, with Pyth prices, SaucerSwap liquidations, and HCS activity.",
+  "version": "1.0.0",
+  "create-scaffold-hbar": {
+    "capabilities": {
+      "frontend": [
+        "nextjs-app"
+      ],
+      "solidityFramework": [
+        "hardhat"
+      ],
+      "packageManager": [
+        "npm"
+      ]
+    },
+    "defaults": {
+      "frontend": "nextjs-app",
+      "solidityFramework": "hardhat",
+      "packageManager": "npm"
+    },
+    "rename": {
+      "HederaLendingTemplate": {
+        "to": "{{projectName}}",
+        "paths": [
+          "."
+        ]
+      }
+    },
+    "envVars": [
+      {
+        "key": "HEDERA_ACCOUNT_ID",
+        "description": "Funded Hedera TESTNET account ID (0.0.N); deployment only."
+      },
+      {
+        "key": "HEDERA_PRIVATE_KEY",
+        "description": "ECDSA private key for that account (raw or DER hex). Never commit."
+      },
+      {
+        "key": "HEDERA_RPC_URL",
+        "description": "Optional testnet JSON-RPC endpoint; default https://testnet.hashio.io/api."
+      },
+      {
+        "key": "HERMES_URL",
+        "description": "Optional Hermes base URL for bootstrap; default https://hermes.pyth.network."
+      },
+      {
+        "key": "PYTH_API_KEY",
+        "description": "Hermes Bearer API key for bootstrap; configure separately in packages/nextjs/.env.local for the app."
+      }
+    ],
+    "requirements": {
+      "node": ">=22.14.0 <25",
+      "npm": ">=10"
+    },
+    "outro": {
+      "sections": [
+        {
+          "title": "Start locally",
+          "steps": [
+            {
+              "command": "{run:dev}"
+            },
+            {
+              "text": "The app boots without credentials. Read README.md for testnet deployment, server-only Pyth/HCS settings, and current SaucerSwap testnet limitations."
+            }
+          ]
+        },
+        {
+          "title": "Validate",
+          "steps": [
+            {
+              "command": "{run:check}"
+            },
+            {
+              "command": "{run:test:fork}"
+            }
+          ]
+        }
+      ],
+      "installCommand": "npm ci"
+    }
+  }
+}

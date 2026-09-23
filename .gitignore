@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# env — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# build outputs
+packages/nextjs/.next/
+packages/nextjs/out/
+packages/hardhat/artifacts/
+packages/hardhat/cache/
+packages/hardhat/coverage/
+packages/hardhat/coverage.json
+packages/hardhat/typechain-types/
+
+# deploy outputs (regenerate with `npm run deploy`)
+packages/nextjs/contracts/deployedContracts.json
+packages/hardhat/deployments/
+
+# logs / os
+*.log
+.DS_Store
+
+# local server journals and compiler metadata
+.data/
+*.tsbuildinfo
