@@ -14,6 +14,21 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 let handler: ReturnType<typeof createActivityHandler> | undefined;
 
+/** Reports whether optional HCS mirroring is configured. Never returns credentials. */
+export function GET() {
+  const topicId = process.env.NEXT_PUBLIC_HCS_TOPIC_ID || null;
+  const configured = Boolean(
+    process.env.HEDERA_ACCOUNT_ID &&
+    process.env.HEDERA_PRIVATE_KEY &&
+    topicId &&
+    process.env.NEXT_PUBLIC_LENDING_POOL,
+  );
+  return Response.json(
+    { ok: true, configured, topicId },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
+
 export async function POST(request: Request) {
   const accountId = process.env.HEDERA_ACCOUNT_ID;
   const privateKey = process.env.HEDERA_PRIVATE_KEY;
@@ -38,7 +53,7 @@ export async function POST(request: Request) {
         : PrivateKey.fromStringDer(rawKey);
       const operator = AccountId.fromString(accountId);
       const store = new ActivityStore(
-        resolve(process.env.ACTIVITY_STORE_DIR ?? ".data/activity"),
+        resolve(process.env.ACTIVITY_STORE_DIR || ".data/activity"),
         `296:${pool.toLowerCase()}:${topicId}`,
       );
       handler = createActivityHandler({
