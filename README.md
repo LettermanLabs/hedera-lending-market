@@ -1,7 +1,8 @@
 # Hedera Lending Market
 
-A lending market designed and built by **[LettermanLabs](https://lettermanlabs.com)** for Hedera testnet. Supply USDX to earn
-interest, deposit HBAR as collateral, and borrow against it using Pyth prices.
+A lending market designed and built by **[LettermanLabs](https://lettermanlabs.com)**
+for Hedera testnet. Supply USDX to earn interest, deposit HBAR as collateral, and
+borrow against it using Pyth prices.
 Liquidations use SaucerSwap V1, and an optional HCS feed records pool activity.
 
 [Interactive walkthrough](https://lettermanlabs.com/Hedera/) ·
@@ -79,8 +80,9 @@ Hermes price. LP tokens remain in the pool contract. Scripts are testnet-only.
 `/api/price-update` keeps Hermes credentials on the server and reports a setup error
 if the key is missing or invalid.
 
-`GET /api/activity` reports whether HCS mirroring is configured. `POST /api/activity` accepts a transaction hash, verifies a recent successful direct pool
-transaction, and derives messages from the receipt's pool events. It checks that the
+`GET /api/activity` reports whether HCS mirroring is configured. `POST /api/activity`
+accepts a transaction hash, verifies a recent successful direct pool transaction,
+and derives messages from the receipt's pool events. It checks that the
 HCS topic has a restricted submit key, deduplicates transactions on disk and caps
 paid submissions at 30 verified transactions per UTC hour. Use one durable shared
 journal directory for all writers; ephemeral/serverless per-instance storage is not
