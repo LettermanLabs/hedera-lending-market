@@ -1,5 +1,7 @@
 # Development notes
 
+Hedera Lending Market is designed and built by [LettermanLabs](https://lettermanlabs.com).
+
 This project targets **Hedera testnet**. Start with the README for setup and
 integration status. Use these notes when changing contracts, scripts, or the app.
 
@@ -18,6 +20,7 @@ Use Node 22.14+ or 24 LTS and `npm` 10+. Root commands:
 | `npm run compile` / `npm run export-abis` | Compile contracts, then refresh frontend ABIs |
 | `npm run test` | Contract, app/server, and deployment helper tests |
 | `npm run test:fork` | Network-dependent Hedera mainnet-fork liquidation and ecosystem checks |
+| `npm run coverage` | Solidity coverage report for the contract tests |
 | `npm run lint` / `npm run build` | Both workspace type/lint checks; production app build |
 | `npm run check` | App validation (also works after CLI consumes the manifest) |
 | `npm run check:template` / `./self-check.sh` | Strict template source validation; manifest required |
