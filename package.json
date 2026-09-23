@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "description": "HederaLendingTemplate: supply USDX and borrow against HBAR on Hedera testnet.",
+  "author": "LettermanLabs (https://lettermanlabs.com)",
+  "license": "MIT",
   "workspaces": [
     "packages/hardhat",
     "packages/nextjs"
@@ -22,6 +24,7 @@
     "test:app": "node --import tsx --test packages/nextjs/lib/*.test.ts packages/nextjs/lib/server/*.test.ts",
     "test:tooling": "node --import tsx --test packages/hardhat/scripts/lib/*.test.ts",
     "test:fork": "npm run test:fork -w @sh/hardhat",
+    "coverage": "npm run coverage -w @sh/hardhat",
     "export-abis": "npm run export-abis -w @sh/hardhat",
     "check": "./self-check.sh --app",
     "format": "prettier --write --ignore-path .gitignore .",
