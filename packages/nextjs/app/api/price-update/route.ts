@@ -3,13 +3,13 @@ import { errorResponse } from "../../../lib/server/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-const feedId = process.env.NEXT_PUBLIC_PYTH_FEED_ID ?? HBAR_USD_FEED;
+const feedId = process.env.NEXT_PUBLIC_PYTH_FEED_ID || HBAR_USD_FEED;
 const fetchUpdate = createPriceService({
   baseUrl:
-    process.env.HERMES_URL ??
-    process.env.NEXT_PUBLIC_HERMES_URL ??
+    process.env.HERMES_URL ||
+    process.env.NEXT_PUBLIC_HERMES_URL ||
     "https://hermes.pyth.network",
-  apiKey: process.env.PYTH_API_KEY ?? process.env.HERMES_API_KEY,
+  apiKey: process.env.PYTH_API_KEY || process.env.HERMES_API_KEY,
   feedId,
 });
 
