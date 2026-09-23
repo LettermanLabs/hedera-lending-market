@@ -19,7 +19,8 @@ export default function Home() {
         <div>
           <h1 className="text-2xl font-bold">Market</h1>
           <p className="text-sm text-slate-400">
-            Supply USDX to earn interest, or borrow it against HBAR collateral — priced by Pyth, settled on Hedera.
+            Supply USDX to earn interest, or borrow it against HBAR collateral —
+            priced by Pyth, settled on Hedera.
           </p>
         </div>
       </div>
