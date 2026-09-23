@@ -10,11 +10,6 @@ export function fmtUsdx(raw: bigint | undefined): string {
   return `${Number(formatUnits(raw, 6)).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDX`;
 }
 
-export function fmtUsd18(raw: bigint | undefined): string {
-  if (raw === undefined) return "—";
-  return `$${Number(formatUnits(raw, 18)).toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
-}
-
 export function shorten(address: string | undefined): string {
   if (!address) return "—";
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
