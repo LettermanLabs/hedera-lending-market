@@ -8,6 +8,12 @@ import { ActivityStore } from "./activity-store";
 import { createActivityHandler } from "./activity-handler";
 import { verifyActivity } from "./verified-activity";
 import {
+  createAuditEvent,
+  type AuditEvent,
+  type AuditInput,
+} from "./audit-event";
+import { randomUUID } from "node:crypto";
+import {
   createPriceService,
   HBAR_USD_FEED,
   validatePriceUpdate,
@@ -244,4 +250,119 @@ test("Hermes sends auth only upstream, caches one feed, and rejects arbitrary fe
     fetcher: async () => new Response(null, { status: 401 }),
   });
   await assert.rejects(denied(HBAR_USD_FEED), /PYTH_API_KEY/);
+});
+
+test("HCS audit records use confirmed receipt fields and distinguish uncertainty from success", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hcs-audit-"));
+  const recorded: AuditEvent[] = [];
+  let sends = 0;
+  let fail = false;
+  const handler = createActivityHandler({
+    pool,
+    topicId: "0.0.123",
+    mirrorNode: "https://mirror.example",
+    submitKey: "1234",
+    now: () => now,
+    store: new ActivityStore(dir, "audit-scope"),
+    fetcher: async (input) =>
+      Response.json(
+        String(input).includes("/topics/")
+          ? { submit_key: { key: "1234" } }
+          : { ...receipt(), hash: fail ? otherHash : hash },
+      ),
+    prepare: () => ({
+      id: "0.0.1@1.2",
+      send: async () => {
+        sends++;
+        if (fail) throw new Error("private transport detail");
+        return "7";
+      },
+    }),
+  });
+  const audit = {
+    requestId: randomUUID(),
+    record: async (
+      detail: Omit<AuditInput, "request_id" | "route" | "method">,
+    ) => {
+      recorded.push(
+        createAuditEvent({
+          ...detail,
+          request_id: audit.requestId,
+          route: "/api/activity",
+          method: "POST",
+        }),
+      );
+    },
+  };
+  const request = (txHash: string) =>
+    new Request("http://localhost/api/activity", {
+      method: "POST",
+      body: JSON.stringify({ txHash }),
+    });
+  try {
+    assert.equal((await handler(request(hash), audit)).status, 200);
+    assert.equal(recorded[0].action, "hcs.submission.started");
+    assert.equal(recorded[1].outcome, "succeeded");
+    assert.equal(recorded[1].context?.account, account);
+    assert.equal(recorded[1].context?.sequence, "7");
+    assert.equal(recorded[1].actor, "hedera-api");
+    assert.equal((await handler(request(hash), audit)).status, 200);
+    assert.equal(recorded.at(-1)?.action, "hcs.submission.duplicate");
+    assert.equal(sends, 1);
+    fail = true;
+    assert.equal((await handler(request(otherHash), audit)).status, 502);
+    assert.equal(recorded.at(-1)?.outcome, "unknown");
+    assert.equal(recorded.at(-1)?.context?.sequence, undefined);
+    assert.equal((await handler(request(otherHash), audit)).status, 503);
+    assert.equal(recorded.at(-1)?.action, "hcs.submission.pending");
+    assert.equal(sends, 2);
+    assert.equal(JSON.stringify(recorded).includes("private transport"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("HCS does not send a payment when its audit intent cannot be persisted", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hcs-audit-failure-"));
+  let sends = 0;
+  const handler = createActivityHandler({
+    pool,
+    topicId: "0.0.123",
+    mirrorNode: "https://mirror.example",
+    submitKey: "1234",
+    now: () => now,
+    store: new ActivityStore(dir, "audit-failure"),
+    fetcher: async (input) =>
+      Response.json(
+        String(input).includes("/topics/")
+          ? { submit_key: { key: "1234" } }
+          : receipt(),
+      ),
+    prepare: () => ({
+      id: "0.0.1@1.2",
+      send: async () => {
+        sends++;
+        return "7";
+      },
+    }),
+  });
+  try {
+    const response = await handler(
+      new Request("http://localhost/api/activity", {
+        method: "POST",
+        body: JSON.stringify({ txHash: hash }),
+      }),
+      {
+        requestId: randomUUID(),
+        record: async () => {
+          throw new Error("Disk full");
+        },
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.equal(sends, 0);
+    assert.match((await response.json()).error, /reconciliation/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -1,6 +1,8 @@
 import { ActivityStore } from "./activity-store";
 import { errorResponse, HttpError, readJson } from "./http";
 import { verifyActivity, type VerifiedActivity } from "./verified-activity";
+import { recordAuditOutcome, type AuditRouteContext } from "./audit-route";
+import type { AuditEvent } from "./audit-event";
 
 export interface ActivityDependencies {
   pool: string;
@@ -21,7 +23,10 @@ export function createActivityHandler(deps: ActivityDependencies) {
   const now = deps.now ?? Date.now;
   let requestWindow = 0;
   let requests = 0;
-  return async (request: Request): Promise<Response> => {
+  return async (
+    request: Request,
+    audit?: AuditRouteContext,
+  ): Promise<Response> => {
     try {
       const origin = request.headers.get("origin");
       if (
@@ -89,6 +94,12 @@ export function createActivityHandler(deps: ActivityDependencies) {
         deps.pool,
         now(),
       );
+      const auditContext: NonNullable<AuditEvent["context"]> = {
+        tx_hash: message.txHash,
+        pool: message.pool,
+        account: message.account.toLowerCase(),
+        topic_id: deps.topicId,
+      };
       const topicResponse = await fetcher(
         `${deps.mirrorNode}/api/v1/topics/${deps.topicId}`,
         {
@@ -112,17 +123,31 @@ export function createActivityHandler(deps: ActivityDependencies) {
           "Configure a restricted HCS topic with this operator's submit key. Redeploy legacy open topics.",
         );
       const reservation = await deps.store.reserve(txHash, now());
-      if (reservation.state === "submitted")
+      if (reservation.state === "submitted") {
+        await recordAuditOutcome(audit, {
+          action: "hcs.submission.duplicate",
+          outcome: "succeeded",
+          actor: "hedera-api",
+          context: { ...auditContext, sequence: reservation.sequence },
+        });
         return Response.json({
           ok: true,
           duplicate: true,
           sequence: reservation.sequence,
         });
-      if (reservation.state === "pending")
+      }
+      if (reservation.state === "pending") {
+        await recordAuditOutcome(audit, {
+          action: "hcs.submission.pending",
+          outcome: "unknown",
+          actor: "hedera-api",
+          context: auditContext,
+        });
         throw new HttpError(
           503,
           "This report is pending reconciliation. It will not be submitted twice; inspect the server activity journal.",
         );
+      }
       if (reservation.state === "limited")
         throw new HttpError(
           429,
@@ -133,7 +158,37 @@ export function createActivityHandler(deps: ActivityDependencies) {
         state: "pending",
         transactionId: submission.id,
       });
-      const sequence = await submission.send();
+      try {
+        await audit?.record({
+          action: "hcs.submission.started",
+          outcome: "started",
+          actor: "hedera-api",
+          context: auditContext,
+        });
+      } catch {
+        throw new HttpError(
+          503,
+          "Security audit storage is unavailable. This report requires reconciliation before retrying.",
+        );
+      }
+      let sequence: string;
+      try {
+        sequence = await submission.send();
+      } catch (error) {
+        await recordAuditOutcome(audit, {
+          action: "hcs.submission.completed",
+          outcome: "unknown",
+          actor: "hedera-api",
+          context: auditContext,
+        });
+        throw error;
+      }
+      await recordAuditOutcome(audit, {
+        action: "hcs.submission.completed",
+        outcome: "succeeded",
+        actor: "hedera-api",
+        context: { ...auditContext, sequence },
+      });
       await deps.store.save(txHash, { state: "submitted", sequence });
       return Response.json({ ok: true, sequence });
     } catch (error) {

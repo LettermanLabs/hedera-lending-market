@@ -1,0 +1,28 @@
+[Unit]
+Description=Hedera audit collector
+After=network.target
+
+[Service]
+Type=simple
+User=hedera-audit
+Group=hedera-audit
+WorkingDirectory=/opt/hedera-lending-market
+EnvironmentFile=/etc/hedera-audit/collector.env
+ExecStart=/usr/bin/node --import tsx scripts/audit/collector.ts
+StateDirectory=hedera-audit
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/hedera-audit
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
