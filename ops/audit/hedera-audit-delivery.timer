@@ -1,0 +1,10 @@
+[Unit]
+Description=Replay pending Hedera audit records each minute
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+Unit=hedera-audit-delivery.service
+
+[Install]
+WantedBy=timers.target

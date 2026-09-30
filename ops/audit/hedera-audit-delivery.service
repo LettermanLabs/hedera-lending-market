@@ -1,0 +1,19 @@
+[Unit]
+Description=Deliver pending Hedera audit records
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hedera-app
+Group=hedera-app
+WorkingDirectory=/opt/hedera-lending-market
+EnvironmentFile=/etc/hedera-audit/writer.env
+ExecStart=/usr/bin/node --import tsx scripts/audit-delivery.ts --once
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hedera-audit-outbox
+TimeoutStartSec=5min

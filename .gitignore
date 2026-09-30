@@ -28,3 +28,9 @@ packages/hardhat/deployments/
 # local server journals and compiler metadata
 .data/
 *.tsbuildinfo
+
+# Private audit exports and local delivery state
+*.audit.jsonl
+*.audit.csv
+*.audit.checkpoint.json
+.audit/

@@ -1,5 +1,6 @@
 import { createPriceService, HBAR_USD_FEED } from "../../../lib/server/hermes";
 import { errorResponse } from "../../../lib/server/http";
+import { withAuditRoute } from "../../../lib/server/audit-route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,16 +14,22 @@ const fetchUpdate = createPriceService({
   feedId,
 });
 
-export async function GET(request: Request) {
-  try {
-    const update = await fetchUpdate(
-      new URL(request.url).searchParams.get("feedId") ?? feedId,
-    );
-    return Response.json(update, { headers: { "Cache-Control": "no-store" } });
-  } catch (error) {
-    return errorResponse(
-      error,
-      "Unable to fetch a signed price update. Please retry shortly.",
-    );
-  }
-}
+export const GET = withAuditRoute(
+  "/api/price-update",
+  "GET",
+  async (request) => {
+    try {
+      const update = await fetchUpdate(
+        new URL(request.url).searchParams.get("feedId") ?? feedId,
+      );
+      return Response.json(update, {
+        headers: { "Cache-Control": "no-store" },
+      });
+    } catch (error) {
+      return errorResponse(
+        error,
+        "Unable to fetch a signed price update. Please retry shortly.",
+      );
+    }
+  },
+);

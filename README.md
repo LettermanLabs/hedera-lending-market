@@ -26,8 +26,7 @@ cd my-lending-market
 npm run dev
 ```
 
-`npm create scaffold-hbar@latest -- <same arguments>` is equivalent. Add `--yes` for a
-non-interactive run.
+Add `--ci` for a non-interactive run.
 
 Keep the `-f`, `-s` and `--package-manager` flags. The CLI reads this template's
 `template.json` through the unauthenticated GitHub API. If that request fails (for
@@ -89,6 +88,14 @@ journal directory for all writers; ephemeral/serverless per-instance storage is 
 sufficient. An uncertain paid submission is retained for inspection and is not
 blindly retried. The feed is best effort: a successful loan remains successful if
 HCS is unavailable. It is not a complete autonomous chain indexer.
+
+### Private audit log
+
+An optional, separate collector records API requests and verified HCS submission
+outcomes. It uses private storage, authenticated ingestion and signed records;
+the public activity feed is unchanged. See [audit log setup](docs/audit-log.md) for
+deployment, delivery, exports and coverage. Collection is off until explicitly
+configured. Audit records and credentials must never be committed to this repo.
 
 ### Resuming deployment
 
