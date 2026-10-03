@@ -62,6 +62,15 @@
     "@hiero-ledger/proto@2.31.0": {
       "ansi-styles": "7.0.0",
       "protobufjs": "8.6.6"
+    },
+    "@grpc/grpc-js@<1.13.6": "1.14.5",
+    "@hiero-ledger/sdk": {
+      "@grpc/grpc-js": "1.14.5"
+    },
+    "solidity-coverage": {
+      "mocha": "11.8.0",
+      "globby": "16.2.4",
+      "chokidar": "5.0.0"
     }
   }
 }

@@ -18,7 +18,7 @@
     "test:fork": "HEDERA_FORKING=true hardhat test test-fork/liquidation.fork.test.ts"
   },
   "dependencies": {
-    "@hiero-ledger/sdk": "^2.88.0",
+    "@hiero-ledger/sdk": "^2.89.1",
     "@openzeppelin/contracts": "^5.2.0",
     "@pythnetwork/pyth-sdk-solidity": "^4.0.0",
     "dotenv": "^16.4.5"
