@@ -34,6 +34,16 @@ export class FileLedgerStorage extends InMemoryLedgerStorage implements LedgerSt
     await appendFile(this.file, JSON.stringify(entry) + "\n", "utf8");
   }
 
+  override async get(dealId: string): Promise<LedgerEntry | null> {
+    await this.ensureLoaded();
+    return super.get(dealId);
+  }
+
+  override async findCompletedByAsset(assetId: string): Promise<LedgerEntry | null> {
+    await this.ensureLoaded();
+    return super.findCompletedByAsset(assetId);
+  }
+
   override async markConfirmed(
     dealId: string,
     receipt: LedgerEntry["receipt"],
